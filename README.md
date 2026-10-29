@@ -5,13 +5,16 @@
 Stellar AuthPath is an incomplete Rust project for analyzing authorization
 material associated with Stellar accounts. It is being developed in explicit
 phases; the current work establishes the repository foundation for Phase C1.
+The current implementation also contains the first conservative authorization
+analysis engine from Phase C2.
 
 ## Current status
 
 Phase C1 is limited to the repository foundation and a typed account
-configuration model. It does not contain a CLI, authorization engine, ledger
-reader, transaction signer, transaction submitter, database, or hosted
-service.
+configuration model. Phase C2 now adds a conservative authorization analysis
+engine for a narrow set of classic Stellar operations. It does not contain a
+CLI, ledger reader, transaction signer, transaction submitter, database, or
+hosted service.
 
 The implementation is incomplete and must not be used to make real
 authorization decisions or to protect real funds. Configured signer weight is
@@ -23,13 +26,13 @@ The planned logical components are:
 
 - `authpath-model` — validated account identities, signer configuration,
   thresholds, availability declarations, and snapshot provenance.
-- `authpath-analysis` — deferred until analysis behavior is specified.
+- `authpath-analysis` — conservative transaction and operation authorization
+  threshold analysis for the supported C2 operation set.
 - `authpath-stellar` — deferred until ledger/network adapters are specified.
 - `authpath-cli` — deferred until the command-line contract is specified.
 
-Only `authpath-model` is created while it has meaningful, independently
-testable behavior. The remaining components will not be added as empty
-placeholders.
+Only authpath-stellar and authpath-cli remain deferred. They will not be added
+as empty placeholders.
 
 ## Development
 
