@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "authpath-analysis"
+version = "0.1.0"
+dependencies = [
+ "authpath-model",
+]
+
+[[package]]
 name = "authpath-model"
 version = "0.1.0"
 dependencies = [
