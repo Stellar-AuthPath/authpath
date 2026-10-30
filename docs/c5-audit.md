@@ -131,6 +131,7 @@ Regression tests include:
 - `explain_rejects_tampered_finding_arithmetic`;
 - `explain_rejects_tampered_reachability_arithmetic`;
 - `explain_rejects_applied_success_after_a_halted_predecessor`;
+- `explain_rejects_reason_finding_not_present_in_authorization_report`;
 - `explain_rejects_hidden_unsupported_signer_disclosure`;
 - `explain_rejects_equal_weights_disguised_as_a_mismatch`;
 - `explain_rejects_removed_fixed_limitations`; and
@@ -195,13 +196,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo audit --deny warnings
 ```
 
-The final local test command passed 161 tests:
+The final local test command passed 162 tests:
 
 ```text
 authpath-analysis unit tests:       62 passed
 authpath-analysis scenarios:        38 passed
 authpath-cli unit tests:             9 passed
-authpath-cli integration tests:     42 passed
+authpath-cli integration tests:     43 passed
 authpath-model unit tests:          10 passed
 ```
 
