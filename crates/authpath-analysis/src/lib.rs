@@ -341,6 +341,11 @@ impl AccountSnapshots {
         self.by_account.get(account)
     }
 
+    /// Iterates over the indexed snapshots in account order.
+    pub fn accounts(&self) -> impl Iterator<Item = &AccountSnapshot> {
+        self.by_account.values()
+    }
+
     /// Returns the number of indexed snapshots.
     #[must_use]
     pub fn len(&self) -> usize {

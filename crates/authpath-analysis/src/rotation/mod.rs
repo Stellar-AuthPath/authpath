@@ -7,9 +7,14 @@
 //! verified on-chain facts.
 
 pub mod plan;
+pub mod transition;
 
 pub use plan::{
     ExpectedAccount, ExpectedSigner, MAX_OPERATIONS_PER_TRANSACTION, MAX_PLAN_TRANSACTIONS,
     PlanError, PlannedTransaction, ReserveDeclaration, RotationPlan, SignerDeclaration,
     TransactionPlanError,
+};
+pub use transition::{
+    ExpectationMismatch, ModeledState, StateOrigin, TransitionError, apply_transaction,
+    compare_expected,
 };
