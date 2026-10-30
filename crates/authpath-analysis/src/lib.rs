@@ -827,7 +827,7 @@ fn evaluate_requirement(
     })
 }
 
-fn required_weight(snapshot: &AccountSnapshot, threshold: ThresholdCategory) -> u64 {
+pub(crate) fn required_weight(snapshot: &AccountSnapshot, threshold: ThresholdCategory) -> u64 {
     let thresholds = snapshot.thresholds();
     match threshold {
         ThresholdCategory::Low => u64::from(thresholds.low().value()),
@@ -836,7 +836,7 @@ fn required_weight(snapshot: &AccountSnapshot, threshold: ThresholdCategory) -> 
     }
 }
 
-fn available_weight(
+pub(crate) fn available_weight(
     snapshot: &AccountSnapshot,
     available_signers: &AvailableSigners,
 ) -> Result<u64, AnalysisError> {

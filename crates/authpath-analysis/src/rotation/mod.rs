@@ -7,6 +7,7 @@
 //! verified on-chain facts.
 
 pub mod plan;
+pub mod reachability;
 pub mod transition;
 
 pub use plan::{
@@ -14,6 +15,7 @@ pub use plan::{
     PlanError, PlannedTransaction, ReserveDeclaration, RotationPlan, SignerDeclaration,
     TransactionPlanError,
 };
+pub use reachability::{AccountReach, LevelReach, LockoutKind, ReachStatus, account_reach};
 pub use transition::{
     ExpectationMismatch, ModeledState, StateOrigin, TransitionError, apply_transaction,
     compare_expected,
