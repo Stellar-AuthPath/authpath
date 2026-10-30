@@ -24,11 +24,15 @@ pub(crate) fn json<T: Serialize>(value: &T) -> Result<String, AppError> {
 /// Existing paths are rejected unless `force` is explicitly set.
 pub(crate) fn write(text: &str, output: Option<&Path>, force: bool) -> Result<(), AppError> {
     match output {
-        None => io::stdout()
-            .write_all(text.as_bytes())
-            .map_err(|error| AppError::operational(format!("could not write stdout: {error}"))),
+        None => write_stdout(&mut io::stdout(), text.as_bytes()),
         Some(path) => atomic_install(text.as_bytes(), path, force),
     }
+}
+
+fn write_stdout<W: Write>(writer: &mut W, bytes: &[u8]) -> Result<(), AppError> {
+    writer
+        .write_all(bytes)
+        .map_err(|error| AppError::operational(format!("could not write stdout: {error}")))
 }
 
 fn atomic_install(bytes: &[u8], path: &Path, force: bool) -> Result<(), AppError> {
@@ -128,7 +132,11 @@ fn temporary_path(parent: &Path, file_name: &std::ffi::OsStr, attempt: u32) -> P
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        sync::{Arc, Barrier},
+        thread,
+    };
 
     static TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
@@ -219,5 +227,84 @@ mod tests {
         assert!(format!("{error}").contains("destination-directory"));
         assert!(destination.is_dir());
         assert!(temporary_entries(&directory).is_empty());
+    }
+
+    #[test]
+    fn temporary_name_collisions_fail_without_installing_partial_output() {
+        let directory = TestDirectory::new();
+        let destination = directory.file("collision.json");
+        let file_name = destination.file_name().expect("destination file name");
+        for attempt in 0..32_u32 {
+            let candidate = temporary_path(&directory.0, file_name, attempt);
+            fs::write(candidate, b"reserved").expect("reserve temporary name");
+        }
+
+        let error = atomic_install(b"new", &destination, false).unwrap_err();
+
+        assert!(format!("{error}").contains("could not allocate a temporary output"));
+        assert!(!destination.exists());
+        for attempt in 0..32_u32 {
+            assert!(temporary_path(&directory.0, file_name, attempt).exists());
+        }
+    }
+
+    #[test]
+    fn concurrent_no_replace_installation_has_one_winner() {
+        let directory = TestDirectory::new();
+        let destination = directory.file("race.json");
+        let (first_path, mut first_file) = temporary_file(&directory, ".authpath-race-a.tmp");
+        first_file.write_all(b"first").expect("write first output");
+        first_file.sync_all().expect("sync first output");
+        drop(first_file);
+        let (second_path, mut second_file) = temporary_file(&directory, ".authpath-race-b.tmp");
+        second_file
+            .write_all(b"second")
+            .expect("write second output");
+        second_file.sync_all().expect("sync second output");
+        drop(second_file);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let first_barrier = Arc::clone(&barrier);
+        let first_destination = destination.clone();
+        let first = thread::spawn(move || {
+            first_barrier.wait();
+            install_synced_temporary(&first_path, &first_destination).is_ok()
+        });
+        let second_barrier = Arc::clone(&barrier);
+        let second_destination = destination.clone();
+        let second = thread::spawn(move || {
+            second_barrier.wait();
+            install_synced_temporary(&second_path, &second_destination).is_ok()
+        });
+        barrier.wait();
+
+        let first_won = first.join().expect("first installer thread");
+        let second_won = second.join().expect("second installer thread");
+        assert_eq!(first_won as usize + second_won as usize, 1);
+        let installed = fs::read(&destination).expect("read installed output");
+        assert!(installed == b"first" || installed == b"second");
+        let _ = fs::remove_file(directory.file(".authpath-race-a.tmp"));
+        let _ = fs::remove_file(directory.file(".authpath-race-b.tmp"));
+    }
+
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn broken_stdout_is_an_operational_error() {
+        let mut writer = BrokenPipeWriter;
+        let error = write_stdout(&mut writer, b"output").unwrap_err();
+
+        assert_eq!(error.exit_code(), crate::error::EXIT_OPERATIONAL);
+        assert!(format!("{error}").contains("broken pipe"));
     }
 }

@@ -5,6 +5,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 use authpath_model::AccountId;
 
 static TEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
@@ -400,6 +403,35 @@ fn inspect_rejects_invalid_account_identity() {
 fn malformed_json_is_invalid_input() {
     let directory = TestDirectory::new();
     let input = directory.write("malformed.json", "{not-json");
+    let input = input.to_string_lossy().into_owned();
+    let output = run(&["inspect", &input]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("malformed JSON"));
+}
+
+#[test]
+fn malformed_utf8_is_invalid_input_without_a_panic() {
+    let directory = TestDirectory::new();
+    let input = directory.file("malformed-utf8.json");
+    fs::write(&input, [b'{', 0xff, b'}']).expect("write malformed UTF-8 input");
+    let input = input.to_string_lossy().into_owned();
+    let output = run(&["inspect", &input]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("malformed JSON"));
+}
+
+#[test]
+fn deeply_nested_json_is_rejected_without_a_panic() {
+    let directory = TestDirectory::new();
+    let mut input_json = String::with_capacity(8_000);
+    for _ in 0..2_000 {
+        input_json.push('[');
+    }
+    input_json.push_str("null");
+    for _ in 0..2_000 {
+        input_json.push(']');
+    }
+    let input = directory.write("deep.json", &input_json);
     let input = input.to_string_lossy().into_owned();
     let output = run(&["inspect", &input]);
     assert_eq!(output.status.code(), Some(2));
@@ -1285,4 +1317,80 @@ fn report_output_failure_does_not_install_partial_file() {
     assert_eq!(output.status.code(), Some(3));
     assert!(!missing_parent.exists());
     assert!(!directory.path.join("missing").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_input_is_read_without_modifying_the_target() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let target = directory.write(
+        "account-target.json",
+        &snapshot(&account_id, 1, Some("Test Network")),
+    );
+    let link = directory.file("account-link.json");
+    symlink(&target, &link).expect("create input symlink");
+    let link = link.to_string_lossy().into_owned();
+
+    let output = run(&["inspect", &link]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output_text(&output).contains(&format!("account: {account_id}")));
+    assert!(target.is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn no_force_output_rejects_existing_symlink_without_touching_target() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let plan = directory.write("symlink-output-plan.json", &no_change_plan(&account_id));
+    let plan = plan.to_string_lossy().into_owned();
+    let target = directory.file("existing-target.json");
+    fs::write(&target, b"keep").expect("write existing target");
+    let destination = directory.file("result-link.json");
+    symlink(&target, &destination).expect("create output symlink");
+    let destination_string = destination.to_string_lossy().into_owned();
+
+    let output = run(&[
+        "--format",
+        "json",
+        "--output",
+        &destination_string,
+        "analyze",
+        &plan,
+    ]);
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(destination.is_symlink());
+    assert_eq!(fs::read(&target).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn force_output_replaces_symlink_entry_without_overwriting_target() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let plan = directory.write("force-symlink-plan.json", &no_change_plan(&account_id));
+    let plan = plan.to_string_lossy().into_owned();
+    let target = directory.file("force-existing-target.json");
+    fs::write(&target, b"keep").expect("write existing target");
+    let destination = directory.file("force-result-link.json");
+    symlink(&target, &destination).expect("create output symlink");
+    let destination_string = destination.to_string_lossy().into_owned();
+
+    let output = run(&[
+        "--format",
+        "json",
+        "--force",
+        "--output",
+        &destination_string,
+        "analyze",
+        &plan,
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!destination.is_symlink());
+    assert_eq!(fs::read(&target).unwrap(), b"keep");
+    assert!(!fs::read(&destination).unwrap().is_empty());
 }
