@@ -288,10 +288,13 @@ pub enum ExpectationMismatch {
     },
 }
 
-/// Compares expected configurations with a modeled state.
+/// Compares caller-supplied expected configurations with a modeled state.
 ///
 /// Signer availability is not compared: an expectation states what the ledger
-/// would hold, and availability is caller metadata.
+/// would hold, and availability is caller metadata. An expectation is an
+/// assertion about the intended result, not proof that the ledger executed
+/// the transaction. Callers should not use a mismatch's modeled state as the
+/// starting state for dependent analysis.
 #[must_use]
 pub fn compare_expected(
     state: &ModeledState,

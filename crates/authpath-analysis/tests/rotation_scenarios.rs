@@ -854,34 +854,117 @@ fn contradictory_availability_for_an_existing_signer_is_inconclusive() {
 }
 
 #[test]
-fn an_expectation_that_disagrees_with_the_model_is_inconclusive() {
-    // Adding signer 100 with weight 2, but the plan expects weight 3.
+fn a_master_weight_expectation_mismatch_halts_dependent_transactions() {
+    let ops = vec![master_op(None, 0)];
+    let transaction = tx_with(
+        1,
+        ops,
+        Vec::new(),
+        ReserveDeclaration::Unverified,
+        vec![expected_account(1, 2, (1, 1, 1), &[])],
+    );
+    let report = run(
+        vec![snap(1, 1, (1, 1, 1), &[])],
+        held(&[1]),
+        vec![transaction, tx(1, vec![master_op(None, 1)])],
+    );
+
+    assert_eq!(classes(&report), [Inconclusive, Inconclusive]);
+    assert_eq!(
+        report.steps()[0].reasons(),
+        &[StepReason::ExpectationMismatch(
+            ExpectationMismatch::MasterKeyWeight {
+                account: acct(1),
+                expected: 2,
+                modeled: 0,
+            }
+        )]
+    );
+    assert!(!report.steps()[0].applied());
+    assert_eq!(
+        report.steps()[1].reasons(),
+        &[StepReason::PredecessorNotApplied { step: 0 }]
+    );
+    assert_eq!(
+        report
+            .final_state()
+            .get(&acct(1))
+            .unwrap()
+            .master_key_weight()
+            .value(),
+        1
+    );
+}
+
+#[test]
+fn a_threshold_expectation_mismatch_halts_dependent_transactions() {
+    let mut changes = SetOptionsChanges::new();
+    changes.medium_threshold = Some(Threshold::from_u8(2));
+    let transaction = tx_with(
+        1,
+        vec![Operation::set_options(None, changes)],
+        Vec::new(),
+        ReserveDeclaration::Unverified,
+        vec![expected_account(1, 1, (1, 1, 1), &[])],
+    );
+    let report = run(
+        vec![snap(1, 1, (1, 1, 1), &[])],
+        held(&[1]),
+        vec![transaction, tx(1, vec![Operation::payment(None)])],
+    );
+
+    assert_eq!(classes(&report), [Inconclusive, Inconclusive]);
+    assert_eq!(
+        report.steps()[0].reasons(),
+        &[StepReason::ExpectationMismatch(
+            ExpectationMismatch::Thresholds { account: acct(1) }
+        )]
+    );
+    assert_eq!(
+        report.steps()[1].reasons(),
+        &[StepReason::PredecessorNotApplied { step: 0 }]
+    );
+    assert_eq!(
+        report.final_state().get(&acct(1)).unwrap().thresholds(),
+        Thresholds::new(1, 1, 1).unwrap()
+    );
+}
+
+#[test]
+fn a_signer_set_expectation_mismatch_halts_dependent_transactions() {
     let ops = vec![signer_op(None, 100, 2)];
     let transaction = tx_with(
         1,
         ops.clone(),
         declarations(&ops, HELD),
         ReserveDeclaration::Unverified,
-        vec![expected_account(1, 1, (1, 1, 1), &[(100, 3)])],
+        vec![expected_account(1, 1, (1, 1, 1), &[])],
     );
     let report = run(
         vec![snap(1, 1, (1, 1, 1), &[])],
         held(&[1, 100]),
-        vec![transaction],
+        vec![transaction, tx(1, vec![signer_op(None, 100, 0)])],
     );
-    assert_eq!(classes(&report), [Inconclusive]);
+
+    assert_eq!(classes(&report), [Inconclusive, Inconclusive]);
     assert_eq!(
         report.steps()[0].reasons(),
         &[StepReason::ExpectationMismatch(
             ExpectationMismatch::Signers { account: acct(1) }
         )]
     );
-    // The model's own result, not the expectation, drives later steps.
+    assert!(!report.steps()[0].applied());
     assert_eq!(
-        report.final_state().get(&acct(1)).unwrap().signers()[0]
-            .weight()
-            .value(),
-        2
+        report.steps()[1].reasons(),
+        &[StepReason::PredecessorNotApplied { step: 0 }]
+    );
+    assert!(
+        report
+            .final_state()
+            .get(&acct(1))
+            .unwrap()
+            .signers()
+            .is_empty()
     );
 }
 

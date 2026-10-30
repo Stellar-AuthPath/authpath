@@ -106,8 +106,10 @@ impl ExpectedSigner {
 }
 
 /// The caller's expectation of one account's configuration after a
-/// transaction. The engine compares it with its modeled result and reports
-/// disagreement; it never trusts the expectation.
+/// transaction. This is a caller-supplied assertion about the intended
+/// result, not proof that a ledger executed the transaction. The engine
+/// compares it with its modeled result and never trusts it as ledger
+/// evidence; disagreement stops dependent analysis.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpectedAccount {
     account: AccountId,
@@ -442,7 +444,8 @@ impl PlannedTransaction {
         self.reserve
     }
 
-    /// Returns the expected post-transaction configurations, if any.
+    /// Returns caller-supplied post-transaction assertions, if any. These are
+    /// not proof of actual ledger execution.
     #[must_use]
     pub fn expected(&self) -> &[ExpectedAccount] {
         &self.expected

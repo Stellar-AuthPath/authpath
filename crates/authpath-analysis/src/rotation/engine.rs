@@ -2,9 +2,10 @@
 //!
 //! Each planned transaction is authorized against the configuration that
 //! exists *before* it, using the C2 engine unchanged. Only if authorization
-//! succeeds are its changes applied conditionally, and the result becomes the
-//! starting state of the next transaction. The first step that cannot be
-//! authorized, cannot apply, or lacks evidence halts the chain, because later
+//! succeeds are its changes applied conditionally, and an internally
+//! consistent result becomes the starting state of the next transaction. The
+//! first step that cannot be authorized, cannot apply, lacks evidence, or
+//! disagrees with an expected configuration halts the chain, because later
 //! starting states would be unknown; later steps are reported as inconclusive
 //! rather than evaluated against a state that was never reached.
 
@@ -64,8 +65,9 @@ impl StepResult {
         &self.changed_accounts
     }
 
-    /// Reports whether the model applied this step's changes. Application is
-    /// conditional on the transaction actually succeeding on a ledger.
+    /// Reports whether this step was accepted into the sequential model.
+    /// Application is conditional on the transaction actually succeeding on a
+    /// ledger, and an expectation mismatch is not accepted as an applied step.
     #[must_use]
     pub const fn applied(&self) -> bool {
         self.applied
@@ -247,6 +249,19 @@ fn evaluate_step(
         }
     };
 
+    // Expectations are caller-supplied assertions about the intended result,
+    // not proof that a ledger executed the transaction. A disagreement means
+    // that this candidate state is not authoritative enough to authorize any
+    // dependent transaction, so do not commit it to the sequential model.
+    let mismatches = compare_expected(&next, transaction.expected());
+    if !mismatches.is_empty() {
+        let reasons = mismatches
+            .into_iter()
+            .map(StepReason::ExpectationMismatch)
+            .collect();
+        return halted(index, reasons, Some(report));
+    }
+
     let mut reasons = Vec::new();
     let mut changed_accounts = Vec::new();
     for changed in changed_accounts_between(state, &next) {
@@ -274,12 +289,6 @@ fn evaluate_step(
             }
         }
     }
-    reasons.extend(
-        compare_expected(&next, transaction.expected())
-            .into_iter()
-            .map(StepReason::ExpectationMismatch),
-    );
-
     let result = StepResult {
         index,
         classification: classify(&reasons),

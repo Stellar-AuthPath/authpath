@@ -193,7 +193,9 @@ A `RotationPlan` holds the initial validated snapshots, the declared
 available signer identities, and an ordered list of `PlannedTransaction`s.
 Each planned transaction carries a C2 `TransactionDescription`, an explicit
 availability declaration for every positive-weight signer change, an optional
-reserve declaration, and optional expected resulting configurations.
+reserve declaration, and optional caller-supplied expected resulting
+configurations. These expectations are assertions about the intended result,
+not proof that a ledger executed the transaction.
 
 Rejected at construction: empty plans and plans over 256 transactions (an
 AuthPath resource bound, not a protocol limit); more than 100 operations per
@@ -231,13 +233,19 @@ For each transaction, in order:
    stellar-core's up-front signature checks.
 2. If authorization is met, the changes are applied conditionally, assuming the
    transaction succeeds.
-3. Each account whose configuration changed is checked for administrative
+3. Any caller-supplied expected configuration is compared with the modeled
+   result. A mismatch is `INCONCLUSIVE`; the candidate result is not accepted
+   into the sequential model because the expectation is an assertion, not
+   ledger evidence.
+4. Each account whose configuration changed is checked for administrative
    reach (below).
-4. The result becomes the starting state of the next transaction.
+5. Only a result with no expectation mismatch becomes the starting state of
+   the next transaction.
 
-The first step that is unauthorized, invalid, or lacks evidence halts the
-chain. Later steps are reported `INCONCLUSIVE` with `PredecessorNotApplied`
-rather than being evaluated against a state that was never reached.
+The first step that is unauthorized, invalid, lacks evidence, or has an
+expectation mismatch halts the chain. Later steps are reported `INCONCLUSIVE`
+with `PredecessorNotApplied` rather than being evaluated against a state that
+was never authoritatively accepted by the model.
 
 ### Administrative reach and lockout
 
