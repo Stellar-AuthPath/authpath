@@ -113,7 +113,7 @@ pub(crate) struct AuthorizationJson {
     pub(crate) findings: Vec<FindingJson>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FindingJson {
     pub(crate) account: String,
@@ -538,6 +538,37 @@ impl StepJson {
             reason.validate(self.index, &self.changed_accounts)?;
             reason_classification =
                 reason_classification.worst(reason_classification_for(&reason.kind)?);
+        }
+        if let Some(authorization) = &self.authorization {
+            let unmet_findings: Vec<_> = authorization
+                .findings
+                .iter()
+                .filter(|finding| !finding.meets_requirement)
+                .collect();
+            let reason_findings: Vec<_> = self
+                .reasons
+                .iter()
+                .filter(|reason| {
+                    matches!(
+                        reason.kind.as_str(),
+                        "authorization_not_met" | "authorization_undecidable"
+                    )
+                })
+                .filter_map(|reason| reason.finding.as_ref())
+                .collect();
+            if reason_findings.len() != unmet_findings.len()
+                || unmet_findings
+                    .iter()
+                    .any(|finding| !reason_findings.contains(finding))
+                || reason_findings
+                    .iter()
+                    .any(|finding| !authorization.findings.contains(finding))
+            {
+                return Err(AppError::invalid(format!(
+                    "step {} authorization reasons do not match its findings",
+                    self.index
+                )));
+            }
         }
         if classification != reason_classification {
             return Err(AppError::invalid(format!(

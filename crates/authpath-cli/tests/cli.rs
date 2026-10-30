@@ -1075,6 +1075,35 @@ fn explain_rejects_tampered_finding_arithmetic() {
 }
 
 #[test]
+fn explain_rejects_reason_finding_not_present_in_authorization_report() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report_for_plan(
+        &directory,
+        "reason-plan.json",
+        "reason-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            "",
+            &[transaction(&account_id, payment_operation(), "", "")],
+        ),
+    )
+    .0;
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["reasons"][0]["finding"]["account"] =
+        serde_json::Value::String(account(2));
+    let tampered = directory.write(
+        "reason-finding-mismatch.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("authorization reasons do not match"));
+}
+
+#[test]
 fn explain_rejects_hidden_unsupported_signer_disclosure() {
     let directory = TestDirectory::new();
     let account_id = account(1);
