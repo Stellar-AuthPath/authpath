@@ -574,6 +574,11 @@ pub enum AuthorizationExplanation {
     RequirementMet,
     /// The available configured weight is short by this amount.
     MissingWeight { missing: u64 },
+    /// The threshold is met numerically, but no declared identity matches a
+    /// signer with positive weight. stellar-core only compares weight to the
+    /// threshold after a signature matches a listed signer, so even a
+    /// threshold of zero requires one matching signature.
+    NoMatchingSigner,
 }
 
 /// One transaction-source or operation-source authorization requirement.
@@ -788,13 +793,20 @@ fn evaluate_requirement(
 
     let required_weight = required_weight(snapshot, threshold);
     let available_weight = available_weight(snapshot, available_signers)?;
-    let meets_requirement = available_weight >= required_weight;
+    // stellar-core evaluates `totalWeight >= neededWeight` only after a
+    // signature matched a listed signer (SignatureChecker::checkSignature),
+    // and the master key is listed only when its weight is non-zero. A
+    // threshold of zero therefore still needs a matching positive-weight
+    // signer, which is exactly `available_weight > 0` here.
+    let meets_requirement = available_weight >= required_weight && available_weight > 0;
     let explanation = if meets_requirement {
         AuthorizationExplanation::RequirementMet
-    } else {
+    } else if available_weight < required_weight {
         AuthorizationExplanation::MissingWeight {
             missing: required_weight - available_weight,
         }
+    } else {
+        AuthorizationExplanation::NoMatchingSigner
     };
 
     Ok(AuthorizationFinding {
@@ -954,6 +966,37 @@ mod tests {
 
         assert_eq!(report.findings()[0].available_weight(), 0);
         assert!(!report.findings()[0].meets_requirement());
+    }
+
+    #[test]
+    fn zero_threshold_still_requires_a_matching_positive_weight_signer() {
+        // stellar-core checks weight only after a signature matches a listed
+        // signer, and omits a zero-weight master key from the signer list.
+        let transaction = payment_transaction(account(1));
+        let snapshots = accounts(vec![snapshot(1, 0, (0, 0, 0), vec![])]);
+        let available = AvailableSigners::new([signer(1)]);
+
+        let report = analyze(&transaction, &snapshots, &available).unwrap();
+
+        assert!(!report.meets_configured_requirements());
+        for finding in report.findings() {
+            assert_eq!(finding.required_weight(), 0);
+            assert_eq!(
+                finding.explanation(),
+                AuthorizationExplanation::NoMatchingSigner
+            );
+        }
+    }
+
+    #[test]
+    fn zero_threshold_is_met_by_any_positive_weight_signer() {
+        let transaction = payment_transaction(account(1));
+        let snapshots = accounts(vec![snapshot(1, 1, (0, 0, 0), vec![])]);
+        let available = AvailableSigners::new([signer(1)]);
+
+        let report = analyze(&transaction, &snapshots, &available).unwrap();
+
+        assert!(report.meets_configured_requirements());
     }
 
     #[test]

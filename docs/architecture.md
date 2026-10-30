@@ -137,6 +137,11 @@ with an explicit source is checked against that account's own snapshot and
 thresholds. Configured weights from different accounts are never combined.
 The transaction source is always checked separately at its low threshold.
 
+A threshold of zero does not waive signing: stellar-core compares the
+accumulated weight to the threshold only after a signature matches a listed
+signer, so at least one declared identity with positive configured weight is
+required for every check (`NoMatchingSigner` otherwise).
+
 The master key contributes only when its Ed25519 identity is explicitly in the
 available set. An additional signer contributes only when it is both
 explicitly marked available in its snapshot and present in the caller's
