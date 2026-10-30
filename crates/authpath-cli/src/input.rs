@@ -19,6 +19,7 @@ use crate::error::AppError;
 
 pub(crate) const ACCOUNT_SCHEMA: &str = "authpath.account_snapshot.v1";
 pub(crate) const PLAN_SCHEMA: &str = "authpath.rotation_plan.v1";
+pub(crate) const OBSERVED_SCHEMA: &str = "authpath.observed_configuration.v1";
 pub(crate) const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 pub(crate) const MAX_PLAN_ACCOUNTS: usize = 256;
 pub(crate) const MAX_DECLARED_SIGNERS: usize = 1024;
@@ -158,6 +159,37 @@ impl AccountDocument {
             self.provenance.model()?,
         )
         .map_err(|error| AppError::invalid(error.to_string()))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ObservedDocument {
+    pub(crate) schema: String,
+    pub(crate) account_id: String,
+    pub(crate) master_key_weight: u32,
+    pub(crate) thresholds: ThresholdInput,
+    pub(crate) signers: Vec<SignerInput>,
+    pub(crate) provenance: ProvenanceInput,
+}
+
+impl ObservedDocument {
+    pub(crate) fn into_model(self) -> Result<AccountSnapshot, AppError> {
+        if self.schema != OBSERVED_SCHEMA {
+            return Err(AppError::invalid(format!(
+                "unsupported observed configuration schema {:?}; expected {OBSERVED_SCHEMA:?}",
+                self.schema
+            )));
+        }
+        AccountDocument {
+            schema: ACCOUNT_SCHEMA.to_owned(),
+            account_id: self.account_id,
+            master_key_weight: self.master_key_weight,
+            thresholds: self.thresholds,
+            signers: self.signers,
+            provenance: self.provenance,
+        }
+        .into_model()
     }
 }
 
@@ -554,6 +586,10 @@ fn parse_declared_signers(
 
 pub(crate) fn load_account(path: &Path) -> Result<AccountSnapshot, AppError> {
     read_json::<AccountDocument>(path)?.into_model()
+}
+
+pub(crate) fn load_observed(path: &Path) -> Result<AccountSnapshot, AppError> {
+    read_json::<ObservedDocument>(path)?.into_model()
 }
 
 pub(crate) fn load_plan(path: &Path) -> Result<RotationPlan, AppError> {

@@ -22,6 +22,7 @@ use crate::{
 
 pub(crate) const ANALYSIS_SCHEMA: &str = "authpath.analysis_report.v1";
 pub(crate) const EXPLANATION_SCHEMA: &str = "authpath.explanation.v1";
+pub(crate) const COMPARISON_SCHEMA: &str = "authpath.offline_comparison.v1";
 
 const MAX_REPORT_STEPS: usize = 256;
 const MAX_REPORT_ACCOUNTS: usize = 256;
@@ -183,6 +184,53 @@ pub(crate) struct ExplanationStepJson {
     pub(crate) findings: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ComparisonJson {
+    pub(crate) schema: &'static str,
+    pub(crate) basis: &'static str,
+    pub(crate) result: &'static str,
+    pub(crate) verified_on_chain: bool,
+    pub(crate) observed_account_id: String,
+    pub(crate) modeled_account_id: Option<String>,
+    pub(crate) account_identity: &'static str,
+    pub(crate) network: NetworkComparisonJson,
+    pub(crate) master_key_weight: ScalarComparisonJson,
+    pub(crate) thresholds: ThresholdComparisonJson,
+    pub(crate) signers: SignerSetComparisonJson,
+    pub(crate) observed_provenance: ProvenanceJson,
+    pub(crate) modeled_provenance: Option<ProvenanceJson>,
+    pub(crate) mismatches: Vec<String>,
+    pub(crate) limitations: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct NetworkComparisonJson {
+    pub(crate) status: &'static str,
+    pub(crate) modeled: Option<String>,
+    pub(crate) observed: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ScalarComparisonJson {
+    pub(crate) status: &'static str,
+    pub(crate) modeled: Option<u32>,
+    pub(crate) observed: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ThresholdComparisonJson {
+    pub(crate) low: ScalarComparisonJson,
+    pub(crate) medium: ScalarComparisonJson,
+    pub(crate) high: ScalarComparisonJson,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SignerSetComparisonJson {
+    pub(crate) status: &'static str,
+    pub(crate) modeled: Vec<SignerJson>,
+    pub(crate) observed: Vec<SignerJson>,
+}
+
 impl AccountFileJson {
     pub(crate) fn from_model(snapshot: &AccountSnapshot) -> Self {
         let config = AccountConfigJson::from_model(snapshot);
@@ -258,6 +306,12 @@ impl From<ProvenanceInput> for ProvenanceJson {
             network: value.network,
             ledger_sequence: value.ledger_sequence,
         }
+    }
+}
+
+impl ProvenanceJson {
+    fn from_model(provenance: &SnapshotProvenance) -> Self {
+        ProvenanceInput::from_model(provenance).into()
     }
 }
 
@@ -848,6 +902,289 @@ pub(crate) fn render_analysis(report: &AnalysisReportJson) -> String {
     writeln!(
         text,
         "The result is conditional on caller-supplied snapshots, declarations and successful execution; it is not VERIFIED_ON_CHAIN."
+    )
+    .expect("writing to a String cannot fail");
+    text
+}
+
+pub(crate) fn compare_configuration(
+    report: &AnalysisReportJson,
+    observed: &AccountSnapshot,
+) -> Result<ComparisonJson, AppError> {
+    let observed_provenance = ProvenanceJson::from_model(observed.provenance());
+    let observed_account_id = observed.account_id().to_string();
+    let candidate = report
+        .final_state
+        .iter()
+        .find(|state| state.snapshot.account_id == observed_account_id);
+    let modeled = candidate
+        .map(|state| state.snapshot.clone().into_model())
+        .transpose()?;
+    let mut mismatches = Vec::new();
+
+    let (
+        account_identity,
+        modeled_account_id,
+        modeled_provenance,
+        network,
+        master_key_weight,
+        thresholds,
+        signers,
+    ) = match modeled.as_ref() {
+        Some(modeled) => {
+            let modeled_account_id = modeled.account_id().to_string();
+            let modeled_provenance = Some(ProvenanceJson::from_model(modeled.provenance()));
+            let network = compare_network(modeled, observed);
+            if network.status == "mismatch" {
+                mismatches.push(format!(
+                    "network identity differs: modeled {:?}, observed {:?}",
+                    network.modeled, network.observed
+                ));
+            }
+
+            let master_key_weight = compare_scalar(
+                u32::from(modeled.master_key_weight().value()),
+                u32::from(observed.master_key_weight().value()),
+            );
+            if master_key_weight.status == "mismatch" {
+                mismatches.push(format!(
+                    "master-key weight differs: modeled {:?}, observed {:?}",
+                    master_key_weight.modeled, master_key_weight.observed
+                ));
+            }
+
+            let modeled_thresholds = modeled.thresholds();
+            let observed_thresholds = observed.thresholds();
+            let thresholds = ThresholdComparisonJson {
+                low: compare_scalar(
+                    u32::from(modeled_thresholds.low().value()),
+                    u32::from(observed_thresholds.low().value()),
+                ),
+                medium: compare_scalar(
+                    u32::from(modeled_thresholds.medium().value()),
+                    u32::from(observed_thresholds.medium().value()),
+                ),
+                high: compare_scalar(
+                    u32::from(modeled_thresholds.high().value()),
+                    u32::from(observed_thresholds.high().value()),
+                ),
+            };
+            for (name, value) in [
+                ("low", &thresholds.low),
+                ("medium", &thresholds.medium),
+                ("high", &thresholds.high),
+            ] {
+                if value.status == "mismatch" {
+                    mismatches.push(format!(
+                        "{name} threshold differs: modeled {:?}, observed {:?}",
+                        value.modeled, value.observed
+                    ));
+                }
+            }
+
+            let signers = SignerSetComparisonJson {
+                status: if signer_pairs(modeled) == signer_pairs(observed) {
+                    "matched"
+                } else {
+                    "mismatch"
+                },
+                modeled: signer_jsons(modeled),
+                observed: signer_jsons(observed),
+            };
+            if signers.status == "mismatch" {
+                mismatches.push(
+                    "configured signer keys or weights differ; signer availability metadata was not compared"
+                        .to_owned(),
+                );
+            }
+            (
+                "matched",
+                Some(modeled_account_id),
+                modeled_provenance,
+                network,
+                master_key_weight,
+                thresholds,
+                signers,
+            )
+        }
+        None => {
+            mismatches.push(format!(
+                "account identity differs: observed account {observed_account_id} is not present in the modeled final state"
+            ));
+            (
+                "mismatch",
+                None,
+                None,
+                NetworkComparisonJson {
+                    status: "not_compared",
+                    modeled: None,
+                    observed: observed
+                        .provenance()
+                        .network()
+                        .map(|network| network.passphrase().to_owned()),
+                },
+                not_compared_scalar(u32::from(observed.master_key_weight().value())),
+                not_compared_thresholds(observed),
+                SignerSetComparisonJson {
+                    status: "not_compared",
+                    modeled: Vec::new(),
+                    observed: signer_jsons(observed),
+                },
+            )
+        }
+    };
+
+    let result = if !mismatches.is_empty() {
+        "OFFLINE_CONFIGURATION_MISMATCH"
+    } else if network.status != "matched" {
+        "INCONCLUSIVE"
+    } else {
+        "OFFLINE_CONFIGURATION_MATCH"
+    };
+
+    Ok(ComparisonJson {
+        schema: COMPARISON_SCHEMA,
+        basis: "offline_configuration_comparison",
+        result,
+        verified_on_chain: false,
+        observed_account_id,
+        modeled_account_id,
+        account_identity,
+        network,
+        master_key_weight,
+        thresholds,
+        signers,
+        observed_provenance,
+        modeled_provenance,
+        mismatches,
+        limitations: vec![
+            "comparison is offline and does not fetch or verify ledger evidence".to_owned(),
+            "observed provenance is caller-declared and is preserved, not upgraded to trust"
+                .to_owned(),
+            "cryptographic signatures, private-key possession and transaction execution are not established"
+                .to_owned(),
+            "signer availability metadata is not an on-chain configuration field and is not compared"
+                .to_owned(),
+        ],
+    })
+}
+
+fn compare_network(modeled: &AccountSnapshot, observed: &AccountSnapshot) -> NetworkComparisonJson {
+    let modeled = modeled
+        .provenance()
+        .network()
+        .map(|network| network.passphrase().to_owned());
+    let observed = observed
+        .provenance()
+        .network()
+        .map(|network| network.passphrase().to_owned());
+    let status = match (&modeled, &observed) {
+        (Some(modeled), Some(observed)) if modeled == observed => "matched",
+        (Some(_), Some(_)) => "mismatch",
+        _ => "unavailable",
+    };
+    NetworkComparisonJson {
+        status,
+        modeled,
+        observed,
+    }
+}
+
+fn compare_scalar(modeled: u32, observed: u32) -> ScalarComparisonJson {
+    ScalarComparisonJson {
+        status: if modeled == observed {
+            "matched"
+        } else {
+            "mismatch"
+        },
+        modeled: Some(modeled),
+        observed: Some(observed),
+    }
+}
+
+fn not_compared_scalar(observed: u32) -> ScalarComparisonJson {
+    ScalarComparisonJson {
+        status: "not_compared",
+        modeled: None,
+        observed: Some(observed),
+    }
+}
+
+fn not_compared_thresholds(observed: &AccountSnapshot) -> ThresholdComparisonJson {
+    let thresholds = observed.thresholds();
+    ThresholdComparisonJson {
+        low: not_compared_scalar(u32::from(thresholds.low().value())),
+        medium: not_compared_scalar(u32::from(thresholds.medium().value())),
+        high: not_compared_scalar(u32::from(thresholds.high().value())),
+    }
+}
+
+fn signer_jsons(snapshot: &AccountSnapshot) -> Vec<SignerJson> {
+    AccountFileJson::from_model(snapshot).signers
+}
+
+fn signer_pairs(snapshot: &AccountSnapshot) -> Vec<(String, u32)> {
+    snapshot
+        .signers()
+        .iter()
+        .map(|signer| (signer.key().to_string(), u32::from(signer.weight().value())))
+        .collect()
+}
+
+pub(crate) fn render_human_comparison(comparison: &ComparisonJson) -> String {
+    let mut text = String::new();
+    writeln!(
+        text,
+        "basis: offline configuration comparison (not on-chain verification)"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(text, "result: {}", comparison.result).expect("writing to a String cannot fail");
+    writeln!(
+        text,
+        "account identity: {} (observed {})",
+        comparison.account_identity, comparison.observed_account_id
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(text, "network identity: {}", comparison.network.status)
+        .expect("writing to a String cannot fail");
+    writeln!(
+        text,
+        "master-key weight: {} (modeled={:?}, observed={:?})",
+        comparison.master_key_weight.status,
+        comparison.master_key_weight.modeled,
+        comparison.master_key_weight.observed
+    )
+    .expect("writing to a String cannot fail");
+    for (name, value) in [
+        ("low", &comparison.thresholds.low),
+        ("medium", &comparison.thresholds.medium),
+        ("high", &comparison.thresholds.high),
+    ] {
+        writeln!(
+            text,
+            "{name} threshold: {} (modeled={:?}, observed={:?})",
+            value.status, value.modeled, value.observed
+        )
+        .expect("writing to a String cannot fail");
+    }
+    writeln!(text, "signer set: {}", comparison.signers.status)
+        .expect("writing to a String cannot fail");
+    if !comparison.mismatches.is_empty() {
+        writeln!(text, "mismatches:").expect("writing to a String cannot fail");
+        for mismatch in &comparison.mismatches {
+            writeln!(text, "  - {mismatch}").expect("writing to a String cannot fail");
+        }
+    }
+    writeln!(
+        text,
+        "observed provenance: {}",
+        provenance_description(&comparison.observed_provenance)
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(text).expect("writing to a String cannot fail");
+    writeln!(
+        text,
+        "A matching file is not proof of ledger state, signatures, private-key possession or transaction success."
     )
     .expect("writing to a String cannot fail");
     text

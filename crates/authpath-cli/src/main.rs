@@ -123,9 +123,20 @@ fn run(cli: Cli) -> Result<i32, AppError> {
                 &report.classification,
             )?))
         }
-        Command::Verify { .. } => Err(AppError::operational(
-            "verify is implemented in a later C4 unit",
-        )),
+        Command::Verify {
+            report: report_path,
+            observed,
+        } => {
+            let report = report::load_report(&report_path)?;
+            let observed = input::load_observed(&observed)?;
+            let comparison = report::compare_configuration(&report, &observed)?;
+            let text = match format {
+                OutputFormat::Human => report::render_human_comparison(&comparison),
+                OutputFormat::Json => output::json(&comparison)?,
+            };
+            output::write(&text, output.as_deref(), force)?;
+            Ok(comparison_exit_code(comparison.result))
+        }
     }
 }
 
@@ -136,5 +147,14 @@ fn analysis_exit_code(classification: authpath_analysis::rotation::SafetyClassif
         authpath_analysis::rotation::SafetyClassification::LockoutRisk
         | authpath_analysis::rotation::SafetyClassification::InvalidTransition
         | authpath_analysis::rotation::SafetyClassification::Blocked => error::EXIT_FINDING,
+    }
+}
+
+fn comparison_exit_code(result: &str) -> i32 {
+    match result {
+        "OFFLINE_CONFIGURATION_MATCH" => EXIT_SUCCESS,
+        "INCONCLUSIVE" => error::EXIT_INCONCLUSIVE,
+        "OFFLINE_CONFIGURATION_MISMATCH" => error::EXIT_FINDING,
+        _ => error::EXIT_OPERATIONAL,
     }
 }
