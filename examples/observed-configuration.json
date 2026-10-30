@@ -1,0 +1,27 @@
+{
+  "schema": "authpath.observed_configuration.v1",
+  "account_id": "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H",
+  "master_key_weight": 1,
+  "thresholds": {
+    "low": 1,
+    "medium": 2,
+    "high": 3
+  },
+  "signers": [
+    {
+      "key": "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA",
+      "weight": 2,
+      "availability": "unavailable"
+    },
+    {
+      "key": "GABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQHGPC",
+      "weight": 2,
+      "availability": "unavailable"
+    }
+  ],
+  "provenance": {
+    "kind": "caller_provided",
+    "network": "Test Network",
+    "ledger_sequence": null
+  }
+}

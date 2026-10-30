@@ -29,8 +29,8 @@ Review dependencies with `cargo audit --deny warnings`. This checks the
 locked dependency graph against the RustSec advisory database and includes
 yanked-crate checks unless `--no-yanked` is explicitly supplied. At the
 2026-10-30 review, cargo-audit 0.22.2 fetched the advisory database and
-reported zero vulnerabilities or warnings across 23 locked dependencies; no
-advisory or yanked-crate check was unavailable.
+reported zero vulnerabilities or warnings in the current locked dependency
+graph; no advisory or yanked-crate check was unavailable.
 
 ## Git and pull requests
 
