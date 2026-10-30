@@ -4,8 +4,8 @@ use authpath_analysis::{
     AccountSnapshots, DeclaredSigner, Operation, SetOptionsChanges, SignerChange,
     TransactionDescription,
     rotation::{
-        ExpectedAccount, ExpectedSigner, PlannedTransaction, ReserveDeclaration, RotationPlan,
-        SignerDeclaration,
+        ExpectedAccount, ExpectedSigner, MAX_OPERATIONS_PER_TRANSACTION, MAX_PLAN_TRANSACTIONS,
+        PlannedTransaction, ReserveDeclaration, RotationPlan, SignerDeclaration,
     },
 };
 use authpath_model::{
@@ -498,6 +498,12 @@ impl RotationPlanDocument {
                 self.initial_accounts.len()
             )));
         }
+        if self.transactions.len() > MAX_PLAN_TRANSACTIONS {
+            return Err(AppError::invalid(format!(
+                "rotation plan contains too many transactions: {} (maximum {MAX_PLAN_TRANSACTIONS})",
+                self.transactions.len()
+            )));
+        }
         if self.available_signers.len() > MAX_DECLARED_SIGNERS {
             return Err(AppError::invalid(format!(
                 "rotation plan contains too many available signer declarations: {} (maximum {MAX_DECLARED_SIGNERS})",
@@ -526,11 +532,23 @@ impl RotationPlanDocument {
 impl TransactionInput {
     fn into_model(self) -> Result<PlannedTransaction, AppError> {
         let source = parse_account(&self.source_account, "transaction source_account")?;
-        if self.operations.len() > authpath_analysis::rotation::MAX_OPERATIONS_PER_TRANSACTION {
+        if self.operations.len() > MAX_OPERATIONS_PER_TRANSACTION {
             return Err(AppError::invalid(format!(
                 "transaction contains too many operations: {} (maximum {})",
                 self.operations.len(),
-                authpath_analysis::rotation::MAX_OPERATIONS_PER_TRANSACTION
+                MAX_OPERATIONS_PER_TRANSACTION
+            )));
+        }
+        if self.signer_availability.len() > MAX_OPERATIONS_PER_TRANSACTION {
+            return Err(AppError::invalid(format!(
+                "transaction contains too many signer availability declarations: {} (maximum {MAX_OPERATIONS_PER_TRANSACTION})",
+                self.signer_availability.len()
+            )));
+        }
+        if self.expected.len() > MAX_PLAN_ACCOUNTS {
+            return Err(AppError::invalid(format!(
+                "transaction contains too many expected accounts: {} (maximum {MAX_PLAN_ACCOUNTS})",
+                self.expected.len()
             )));
         }
         let operations = self
@@ -670,5 +688,53 @@ mod tests {
             },
         };
         assert!(document.into_model().is_err());
+    }
+
+    #[test]
+    fn plan_and_transaction_collections_are_bounded_before_modeling() {
+        let account = AccountId::from_bytes([1; 32]).to_string();
+        let transaction = || TransactionInput {
+            source_account: account.clone(),
+            operations: Vec::new(),
+            signer_availability: Vec::new(),
+            reserve: ReserveInput::Unverified,
+            expected: Vec::new(),
+        };
+        let plan = RotationPlanDocument {
+            schema: PLAN_SCHEMA.to_owned(),
+            initial_accounts: Vec::new(),
+            available_signers: Vec::new(),
+            transactions: std::iter::repeat_with(transaction)
+                .take(MAX_PLAN_TRANSACTIONS + 1)
+                .collect(),
+        };
+        assert!(
+            plan.into_model()
+                .unwrap_err()
+                .to_string()
+                .contains("too many transactions")
+        );
+
+        let declarations = std::iter::repeat_with(|| SignerDeclarationInput {
+            operation_index: 0,
+            key: account.clone(),
+            availability: AvailabilityInput::Available,
+        })
+        .take(MAX_OPERATIONS_PER_TRANSACTION + 1)
+        .collect();
+        let transaction = TransactionInput {
+            source_account: account,
+            operations: Vec::new(),
+            signer_availability: declarations,
+            reserve: ReserveInput::Unverified,
+            expected: Vec::new(),
+        };
+        assert!(
+            transaction
+                .into_model()
+                .unwrap_err()
+                .to_string()
+                .contains("too many signer availability declarations")
+        );
     }
 }
