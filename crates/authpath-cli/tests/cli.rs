@@ -675,6 +675,24 @@ fn explain_rejects_malformed_and_unsupported_reports() {
 }
 
 #[test]
+fn explain_rejects_structurally_inconsistent_reports() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report(&directory, &account_id);
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"] = serde_json::Value::Array(Vec::new());
+    let malformed = directory.write(
+        "empty-steps-report.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let malformed = malformed.to_string_lossy().into_owned();
+    let output = run(&["explain", &malformed]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("at least one step"));
+}
+
+#[test]
 fn missing_input_files_are_operational_failures() {
     let directory = TestDirectory::new();
     let missing = directory.file("does-not-exist.json");

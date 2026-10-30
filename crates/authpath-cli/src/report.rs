@@ -389,6 +389,11 @@ impl AnalysisReportJson {
             ));
         }
         parse_classification(&self.classification)?;
+        if self.steps.is_empty() {
+            return Err(AppError::invalid(
+                "analysis report must contain at least one step",
+            ));
+        }
         if self.steps.len() > MAX_REPORT_STEPS {
             return Err(AppError::invalid("analysis report contains too many steps"));
         }
@@ -420,6 +425,7 @@ impl AnalysisReportJson {
             }
         }
 
+        let mut worst_step = SafetyClassification::SupportedReachable;
         for (expected_index, step) in self.steps.iter().enumerate() {
             if step.index != expected_index {
                 return Err(AppError::invalid(format!(
@@ -428,6 +434,12 @@ impl AnalysisReportJson {
                 )));
             }
             step.validate()?;
+            worst_step = worst_step.worst(parse_classification(&step.classification)?);
+        }
+        if parse_classification(&self.classification)? != worst_step {
+            return Err(AppError::invalid(
+                "analysis report classification does not match its steps",
+            ));
         }
         Ok(())
     }
@@ -450,7 +462,7 @@ impl StepJson {
     }
 
     fn validate(&self) -> Result<(), AppError> {
-        parse_classification(&self.classification)?;
+        let classification = parse_classification(&self.classification)?;
         if self.reasons.len() > MAX_REPORT_REASONS {
             return Err(AppError::invalid(format!(
                 "step {} contains too many reasons",
@@ -463,8 +475,28 @@ impl StepJson {
         for changed in &self.changed_accounts {
             changed.validate()?;
         }
+        let mut reason_classification = SafetyClassification::SupportedReachable;
         for reason in &self.reasons {
             reason.validate()?;
+            reason_classification =
+                reason_classification.worst(reason_classification_for(&reason.kind)?);
+        }
+        if classification != reason_classification {
+            return Err(AppError::invalid(format!(
+                "step {} classification does not match its reasons",
+                self.index
+            )));
+        }
+        if self.applied
+            != matches!(
+                classification,
+                SafetyClassification::SupportedReachable | SafetyClassification::LockoutRisk
+            )
+        {
+            return Err(AppError::invalid(format!(
+                "step {} has an invalid applied flag for {}",
+                self.index, self.classification
+            )));
         }
         Ok(())
     }
@@ -500,6 +532,20 @@ impl AuthorizationJson {
         }
         for finding in &self.findings {
             finding.validate()?;
+        }
+        let meets = self
+            .findings
+            .iter()
+            .all(|finding| finding.meets_requirement);
+        let expected = if meets {
+            "meets_configured_requirements"
+        } else {
+            "does_not_meet_configured_requirements"
+        };
+        if self.conclusion != expected {
+            return Err(AppError::invalid(
+                "authorization conclusion does not match its findings",
+            ));
         }
         Ok(())
     }
@@ -1313,6 +1359,22 @@ fn parse_classification(value: &str) -> Result<SafetyClassification, AppError> {
 
 pub(crate) fn parse_report_classification(value: &str) -> Result<SafetyClassification, AppError> {
     parse_classification(value)
+}
+
+fn reason_classification_for(kind: &str) -> Result<SafetyClassification, AppError> {
+    match kind {
+        "authorization_not_met" => Ok(SafetyClassification::Blocked),
+        "administration_lost" => Ok(SafetyClassification::LockoutRisk),
+        "invalid_transition" => Ok(SafetyClassification::InvalidTransition),
+        "authorization_undecidable"
+        | "transition_unresolved"
+        | "evidence_insufficient"
+        | "expectation_mismatch"
+        | "predecessor_not_applied" => Ok(SafetyClassification::Inconclusive),
+        _ => Err(AppError::invalid(format!(
+            "unsupported analysis reason kind {kind:?}"
+        ))),
+    }
 }
 
 fn parse_key_or_account(value: &str, field: &str) -> Result<(), AppError> {
