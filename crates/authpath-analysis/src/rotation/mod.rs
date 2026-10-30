@@ -7,6 +7,7 @@
 //! verified on-chain facts.
 
 pub mod classification;
+pub mod engine;
 pub mod plan;
 pub mod reachability;
 pub mod transition;
@@ -14,6 +15,7 @@ pub mod transition;
 pub use classification::{
     ResultBasis, RotationLimitation, SafetyClassification, StepReason, classify, limitations,
 };
+pub use engine::{RotationReport, StepResult, analyze_rotation};
 pub use plan::{
     ExpectedAccount, ExpectedSigner, MAX_OPERATIONS_PER_TRANSACTION, MAX_PLAN_TRANSACTIONS,
     PlanError, PlannedTransaction, ReserveDeclaration, RotationPlan, SignerDeclaration,

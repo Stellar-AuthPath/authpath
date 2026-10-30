@@ -108,6 +108,16 @@ impl AccountReach {
         self.high
     }
 
+    /// Returns the reachability of a threshold category.
+    #[must_use]
+    pub const fn level(&self, threshold: ThresholdCategory) -> LevelReach {
+        match threshold {
+            ThresholdCategory::Low => self.low,
+            ThresholdCategory::Medium => self.medium,
+            ThresholdCategory::High => self.high,
+        }
+    }
+
     /// Reports whether the account's own configuration can still be changed
     /// by declared-available signers.
     #[must_use]
