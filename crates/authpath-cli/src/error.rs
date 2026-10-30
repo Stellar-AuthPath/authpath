@@ -17,6 +17,10 @@ impl AppError {
         Self::InvalidInput(message.into())
     }
 
+    pub(crate) fn operational(message: impl Into<String>) -> Self {
+        Self::Operational(message.into())
+    }
+
     pub(crate) fn io(path: &Path, error: impl fmt::Display) -> Self {
         Self::Operational(format!("{}: {error}", path.display()))
     }

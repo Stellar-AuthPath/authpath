@@ -12,19 +12,18 @@ use authpath_model::{
     AccountId, AccountSnapshot, ConfiguredSigner, Ed25519PublicKey, MasterKeyWeight,
     NetworkIdentity, SignerAvailability, SignerType, SignerWeight, SnapshotProvenance, Thresholds,
 };
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
 pub(crate) const ACCOUNT_SCHEMA: &str = "authpath.account_snapshot.v1";
 pub(crate) const PLAN_SCHEMA: &str = "authpath.rotation_plan.v1";
-pub(crate) const OBSERVED_SCHEMA: &str = "authpath.observed_configuration.v1";
 pub(crate) const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 pub(crate) const MAX_PLAN_ACCOUNTS: usize = 256;
 pub(crate) const MAX_DECLARED_SIGNERS: usize = 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AccountDocument {
     pub(crate) schema: String,
@@ -35,7 +34,7 @@ pub(crate) struct AccountDocument {
     pub(crate) provenance: ProvenanceInput,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ThresholdInput {
     pub(crate) low: u32,
@@ -43,7 +42,7 @@ pub(crate) struct ThresholdInput {
     pub(crate) high: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SignerInput {
     pub(crate) key: String,
@@ -51,7 +50,7 @@ pub(crate) struct SignerInput {
     pub(crate) availability: AvailabilityInput,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AvailabilityInput {
     Available,
@@ -67,7 +66,7 @@ impl AvailabilityInput {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProvenanceInput {
     pub(crate) kind: String,
@@ -573,7 +572,7 @@ pub(crate) fn parse_key(value: &str, field: &str) -> Result<Ed25519PublicKey, Ap
         .map_err(|error| AppError::invalid(format!("{field} is invalid: {error}")))
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, AppError> {
+pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, AppError> {
     let mut file = File::open(path).map_err(|error| AppError::io(path, error))?;
     let metadata = file.metadata().map_err(|error| AppError::io(path, error))?;
     if metadata.len() > MAX_INPUT_BYTES {
