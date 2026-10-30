@@ -1043,6 +1043,74 @@ fn explain_rejects_tampered_finding_arithmetic() {
 }
 
 #[test]
+fn explain_rejects_hidden_unsupported_signer_disclosure() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let payment = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "unsupported-report-plan.json",
+        "unsupported-report.json",
+        &plan(
+            &initial,
+            r#"{"kind":"hash_x","key":null,"code":null}"#,
+            &[payment],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["unsupported_signer_types"] = serde_json::json!([]);
+    let tampered = directory.write(
+        "hidden-unsupported-signer.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("hides unsupported signer disclosure"));
+}
+
+#[test]
+fn explain_rejects_equal_weights_disguised_as_a_mismatch() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let mismatch = transaction(
+        &account_id,
+        &set_master_operation(0),
+        "",
+        &expected_account(&account_id, 1, (1, 1, 1), &[]),
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "equal-mismatch-plan.json",
+        "equal-mismatch-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            &available_ed25519(&[&account_id]),
+            &[mismatch],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    let expected =
+        report_json["steps"][0]["reasons"][0]["mismatch"]["expected_master_key_weight"].clone();
+    report_json["steps"][0]["reasons"][0]["mismatch"]["modeled_master_key_weight"] = expected;
+    let tampered = directory.write(
+        "equal-mismatch-tampered.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("must contain different weights"));
+}
+
+#[test]
 fn explain_rejects_tampered_reachability_arithmetic() {
     let directory = TestDirectory::new();
     let account_id = account(1);

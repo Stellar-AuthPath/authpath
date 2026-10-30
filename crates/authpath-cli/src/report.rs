@@ -415,6 +415,8 @@ impl AnalysisReportJson {
             ));
         }
         validate_unsupported_signer_types(&self.unsupported_signer_types)?;
+        let declared_unsupported_signers: BTreeSet<_> =
+            self.unsupported_signer_types.iter().collect();
         let expected_limitations: Vec<_> = authpath_analysis::rotation::limitations()
             .iter()
             .map(rotation_limitation_name)
@@ -460,6 +462,18 @@ impl AnalysisReportJson {
             }
             let classification = parse_classification(&step.classification)?;
             step.validate()?;
+            for reason in &step.reasons {
+                if reason.kind == "authorization_undecidable" {
+                    for signer_type in &reason.unsupported_signer_types {
+                        if !declared_unsupported_signers.contains(signer_type) {
+                            return Err(AppError::invalid(format!(
+                                "step {} hides unsupported signer disclosure {:?} from the report",
+                                step.index, signer_type
+                            )));
+                        }
+                    }
+                }
+            }
             if let Some(predecessor) = halted_at {
                 validate_not_evaluated_step(step, predecessor)?;
             } else if classification != SafetyClassification::SupportedReachable {
@@ -1182,22 +1196,47 @@ impl MismatchJson {
 
     fn validate(&self) -> Result<(), AppError> {
         parse_key_or_account(&self.account, "expectation mismatch account")?;
-        if !matches!(
-            self.kind.as_str(),
-            "account_missing" | "master_key_weight" | "thresholds" | "signers"
-        ) {
-            return Err(AppError::invalid(format!(
-                "unsupported expectation mismatch kind {:?}",
-                self.kind
-            )));
-        }
-        if self.kind == "master_key_weight"
-            && (self.expected_master_key_weight.is_none()
-                || self.modeled_master_key_weight.is_none())
-        {
-            return Err(AppError::invalid(
-                "master_key_weight mismatch needs expected and modeled weights",
-            ));
+        match self.kind.as_str() {
+            "account_missing" => {
+                if self.expected_master_key_weight.is_some()
+                    || self.modeled_master_key_weight.is_some()
+                {
+                    return Err(AppError::invalid(
+                        "account_missing mismatch cannot contain master-key weights",
+                    ));
+                }
+            }
+            "master_key_weight" => {
+                let (Some(expected), Some(modeled)) = (
+                    self.expected_master_key_weight,
+                    self.modeled_master_key_weight,
+                ) else {
+                    return Err(AppError::invalid(
+                        "master_key_weight mismatch needs expected and modeled weights",
+                    ));
+                };
+                if expected == modeled {
+                    return Err(AppError::invalid(
+                        "master_key_weight mismatch must contain different weights",
+                    ));
+                }
+            }
+            "thresholds" | "signers" => {
+                if self.expected_master_key_weight.is_some()
+                    || self.modeled_master_key_weight.is_some()
+                {
+                    return Err(AppError::invalid(format!(
+                        "{} mismatch cannot contain master-key weights",
+                        self.kind
+                    )));
+                }
+            }
+            _ => {
+                return Err(AppError::invalid(format!(
+                    "unsupported expectation mismatch kind {:?}",
+                    self.kind
+                )));
+            }
         }
         Ok(())
     }
