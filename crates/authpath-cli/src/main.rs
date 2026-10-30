@@ -8,6 +8,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod error;
+mod input;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "authpath",
