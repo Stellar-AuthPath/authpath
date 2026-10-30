@@ -730,6 +730,137 @@ fn verify_preserves_lockout_risk_when_matching_modeled_configuration() {
 }
 
 #[test]
+fn explain_and_verify_accept_applied_lockout_followed_by_an_evaluated_step() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let later_source = account(2);
+    let replacement = account(3);
+    let initial = format!(
+        "{},{}",
+        snapshot_custom(
+            &account_id,
+            1,
+            (1, 1, 1),
+            &[(&replacement, 1, "unavailable")],
+            Some("Test Network"),
+        ),
+        snapshot(&later_source, 1, Some("Test Network")),
+    );
+    let lockout = transaction(&account_id, &set_master_operation(0), "", "");
+    let later = transaction(&later_source, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "applied-lockout-plan.json",
+        "applied-lockout-report.json",
+        &plan(
+            &initial,
+            &available_ed25519(&[&account_id, &later_source]),
+            &[lockout, later],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(report_json["classification"], "LOCKOUT_RISK");
+    assert_eq!(report_json["steps"][0]["classification"], "LOCKOUT_RISK");
+    assert_eq!(report_json["steps"][0]["applied"], true);
+    assert_eq!(
+        report_json["steps"][1]["classification"],
+        "SUPPORTED_REACHABLE"
+    );
+    assert_eq!(report_json["steps"][1]["applied"], true);
+
+    let report_string = report.to_string_lossy().into_owned();
+    let explained = run(&["--format", "json", "explain", &report_string]);
+    assert_eq!(
+        explained.status.code(),
+        Some(10),
+        "{}",
+        error_text(&explained)
+    );
+    let explanation: serde_json::Value = serde_json::from_str(&output_text(&explained)).unwrap();
+    assert_eq!(explanation["classification"], "LOCKOUT_RISK");
+
+    let observed = directory.write(
+        "applied-lockout-observed.json",
+        &observed_custom(
+            &account_id,
+            0,
+            (1, 1, 1),
+            &[(&replacement, 1, "unavailable")],
+            Some("Test Network"),
+        ),
+    );
+    let observed_string = observed.to_string_lossy().into_owned();
+    let compared = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report_string,
+        "--observed",
+        &observed_string,
+    ]);
+    assert_eq!(
+        compared.status.code(),
+        Some(10),
+        "{}",
+        error_text(&compared)
+    );
+    let comparison: serde_json::Value = serde_json::from_str(&output_text(&compared)).unwrap();
+    assert_eq!(comparison["result"], "LOCKOUT_RISK");
+    assert_eq!(comparison["configuration_result"], "MATCHED");
+    assert_eq!(comparison["completion_status"], "not_complete");
+}
+
+#[test]
+fn explain_accepts_applied_lockout_followed_by_a_blocked_transaction() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let replacement = account(3);
+    let initial = snapshot_custom(
+        &account_id,
+        1,
+        (1, 1, 1),
+        &[(&replacement, 1, "unavailable")],
+        Some("Test Network"),
+    );
+    let lockout = transaction(&account_id, &set_master_operation(0), "", "");
+    let blocked = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "lockout-then-blocked-plan.json",
+        "lockout-then-blocked-report.json",
+        &plan(
+            &initial,
+            &available_ed25519(&[&account_id]),
+            &[lockout, blocked],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(report_json["classification"], "BLOCKED");
+    assert_eq!(report_json["steps"][0]["classification"], "LOCKOUT_RISK");
+    assert_eq!(report_json["steps"][0]["applied"], true);
+    assert_eq!(report_json["steps"][1]["classification"], "BLOCKED");
+    assert_eq!(report_json["steps"][1]["applied"], false);
+
+    let report_string = report.to_string_lossy().into_owned();
+    let explained = run(&["--format", "json", "explain", &report_string]);
+    assert_eq!(
+        explained.status.code(),
+        Some(10),
+        "{}",
+        error_text(&explained)
+    );
+    let explanation: serde_json::Value = serde_json::from_str(&output_text(&explained)).unwrap();
+    assert_eq!(explanation["classification"], "BLOCKED");
+}
+
+#[test]
 fn verify_preserves_invalid_transition_when_configuration_matches_unapplied_plan() {
     let directory = TestDirectory::new();
     let account_id = account(1);
@@ -777,6 +908,56 @@ fn verify_preserves_invalid_transition_when_configuration_matches_unapplied_plan
     assert_eq!(json["configuration_result"], "MATCHED");
     assert_eq!(json["plan_classification"], "INVALID_TRANSITION");
     assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
+fn explain_accepts_engine_generated_invalid_transition_with_dependent_step() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let added = account(2);
+    let invalid = transaction_with_reserve(
+        &account_id,
+        &set_signer_operation(&added, 1),
+        &signer_declaration(0, &added, "available"),
+        "declared_insufficient",
+        "",
+    );
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "invalid-dependent-plan.json",
+        "invalid-dependent-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            &available_ed25519(&[&account_id, &added]),
+            &[invalid, dependent],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(report_json["classification"], "INVALID_TRANSITION");
+    assert_eq!(
+        report_json["steps"][0]["classification"],
+        "INVALID_TRANSITION"
+    );
+    assert_eq!(report_json["steps"][0]["applied"], false);
+    assert_eq!(
+        report_json["steps"][1]["reasons"][0]["kind"],
+        "predecessor_not_applied"
+    );
+
+    let report_string = report.to_string_lossy().into_owned();
+    let explained = run(&["--format", "json", "explain", &report_string]);
+    assert_eq!(
+        explained.status.code(),
+        Some(10),
+        "{}",
+        error_text(&explained)
+    );
+    let explanation: serde_json::Value = serde_json::from_str(&output_text(&explained)).unwrap();
+    assert_eq!(explanation["classification"], "INVALID_TRANSITION");
 }
 
 #[test]
@@ -1047,6 +1228,44 @@ fn explain_rejects_applied_success_after_a_halted_predecessor() {
     report_json["classification"] = serde_json::Value::String("INCONCLUSIVE".to_owned());
     let tampered = directory.write(
         "applied-after-halt.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("contradicts halted predecessor"));
+}
+
+#[test]
+fn explain_rejects_applied_success_after_a_blocked_predecessor() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let supported_report = write_report(&directory, &account_id);
+    let supported_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&supported_report).unwrap()).unwrap();
+    let blocked = transaction(&account_id, payment_operation(), "", "");
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "blocked-successor-plan.json",
+        "blocked-successor-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            "",
+            &[blocked, dependent],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][1]["classification"] =
+        serde_json::Value::String("SUPPORTED_REACHABLE".to_owned());
+    report_json["steps"][1]["applied"] = serde_json::Value::Bool(true);
+    report_json["steps"][1]["authorization"] = supported_json["steps"][0]["authorization"].clone();
+    report_json["steps"][1]["reasons"] = serde_json::json!([]);
+    let tampered = directory.write(
+        "applied-after-blocked.json",
         &serde_json::to_string(&report_json).unwrap(),
     );
     let tampered = tampered.to_string_lossy().into_owned();

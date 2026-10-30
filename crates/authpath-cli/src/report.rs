@@ -476,7 +476,7 @@ impl AnalysisReportJson {
             }
             if let Some(predecessor) = halted_at {
                 validate_not_evaluated_step(step, predecessor)?;
-            } else if classification != SafetyClassification::SupportedReachable {
+            } else if !step.applied {
                 halted_at = Some(step.index);
             }
             worst_step = worst_step.worst(classification);
