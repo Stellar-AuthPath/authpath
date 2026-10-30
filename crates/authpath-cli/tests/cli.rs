@@ -980,6 +980,121 @@ fn explain_rejects_contradictory_step_completion_metadata() {
 }
 
 #[test]
+fn explain_rejects_applied_success_after_a_halted_predecessor() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let mismatch = transaction(
+        &account_id,
+        &set_master_operation(0),
+        "",
+        &expected_account(&account_id, 1, (1, 1, 1), &[]),
+    );
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let plan_json = plan(
+        &initial,
+        &available_ed25519(&[&account_id]),
+        &[mismatch, dependent],
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "halted-report-plan.json",
+        "halted-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    let predecessor_authorization = report_json["steps"][0]["authorization"].clone();
+    report_json["steps"][1]["classification"] =
+        serde_json::Value::String("SUPPORTED_REACHABLE".to_owned());
+    report_json["steps"][1]["applied"] = serde_json::Value::Bool(true);
+    report_json["steps"][1]["authorization"] = predecessor_authorization;
+    report_json["steps"][1]["reasons"] = serde_json::json!([]);
+    report_json["classification"] = serde_json::Value::String("INCONCLUSIVE".to_owned());
+    let tampered = directory.write(
+        "applied-after-halt.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("contradicts halted predecessor"));
+}
+
+#[test]
+fn explain_rejects_tampered_finding_arithmetic() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report(&directory, &account_id);
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["authorization"]["findings"][0]["available_weight"] =
+        serde_json::Value::Number(0.into());
+    let tampered = directory.write(
+        "tampered-finding.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("meets_requirement contradicts"));
+}
+
+#[test]
+fn explain_rejects_tampered_reachability_arithmetic() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let added = account(2);
+    let initial = snapshot_custom(&account_id, 1, (1, 2, 1), &[], Some("Test Network"));
+    let add = transaction(
+        &account_id,
+        &set_signer_operation(&added, 1),
+        &signer_declaration(0, &added, "available"),
+        &expected_account(&account_id, 1, (1, 2, 1), &[(&added, 1)]),
+    );
+    let plan_json = plan(&initial, &available_ed25519(&[&account_id, &added]), &[add]);
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "reachability-report-plan.json",
+        "reachability-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(0));
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["changed_accounts"][0]["medium"]["available_weight"] =
+        serde_json::Value::Number(99.into());
+    let tampered = directory.write(
+        "tampered-reachability.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("exceeds configured weight"));
+}
+
+#[test]
+fn explain_rejects_removed_fixed_limitations() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report(&directory, &account_id);
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["limitations"].as_array_mut().unwrap().pop();
+    let tampered = directory.write(
+        "hidden-limitations.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("fixed conditional-model disclosures"));
+}
+
+#[test]
 fn missing_input_files_are_operational_failures() {
     let directory = TestDirectory::new();
     let missing = directory.file("does-not-exist.json");

@@ -8,7 +8,7 @@ use authpath_analysis::{
     },
 };
 use authpath_model::{
-    AccountId, AccountSnapshot, SignerAvailability, SignerType, SnapshotProvenance,
+    AccountId, AccountSnapshot, MAX_SIGNERS, SignerAvailability, SignerType, SnapshotProvenance,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,10 @@ pub(crate) const COMPARISON_SCHEMA: &str = "authpath.offline_comparison.v1";
 const MAX_REPORT_STEPS: usize = 256;
 const MAX_REPORT_ACCOUNTS: usize = 256;
 const MAX_REPORT_REASONS: usize = 64;
+const MAX_REPORT_FINDINGS: usize = 101;
+const MAX_REPORT_CHANGED_ACCOUNTS: usize = 100;
+const MAX_REPORT_UNSUPPORTED_SIGNERS: usize = 64;
+const MAX_CONFIGURED_WEIGHT: u64 = (MAX_SIGNERS as u64 + 1) * 255;
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AccountFileJson {
@@ -405,9 +409,19 @@ impl AnalysisReportJson {
                 "analysis report contains too many final-state accounts",
             ));
         }
-        if self.limitations.is_empty() || self.limitations.iter().any(String::is_empty) {
+        if self.unsupported_signer_types.len() > MAX_REPORT_UNSUPPORTED_SIGNERS {
             return Err(AppError::invalid(
-                "analysis report must contain non-empty limitations",
+                "analysis report contains too many unsupported signer disclosures",
+            ));
+        }
+        validate_unsupported_signer_types(&self.unsupported_signer_types)?;
+        let expected_limitations: Vec<_> = authpath_analysis::rotation::limitations()
+            .iter()
+            .map(rotation_limitation_name)
+            .collect();
+        if self.limitations != expected_limitations {
+            return Err(AppError::invalid(
+                "analysis report limitations do not match the fixed conditional-model disclosures",
             ));
         }
 
@@ -426,9 +440,17 @@ impl AnalysisReportJson {
                     snapshot.account_id()
                 )));
             }
+            if state_account.origin == "modeled"
+                && matches!(snapshot.provenance(), SnapshotProvenance::Ledger { .. })
+            {
+                return Err(AppError::invalid(
+                    "modeled final-state accounts cannot claim ledger provenance",
+                ));
+            }
         }
 
         let mut worst_step = SafetyClassification::SupportedReachable;
+        let mut halted_at = None;
         for (expected_index, step) in self.steps.iter().enumerate() {
             if step.index != expected_index {
                 return Err(AppError::invalid(format!(
@@ -436,8 +458,14 @@ impl AnalysisReportJson {
                     step.index
                 )));
             }
+            let classification = parse_classification(&step.classification)?;
             step.validate()?;
-            worst_step = worst_step.worst(parse_classification(&step.classification)?);
+            if let Some(predecessor) = halted_at {
+                validate_not_evaluated_step(step, predecessor)?;
+            } else if classification != SafetyClassification::SupportedReachable {
+                halted_at = Some(step.index);
+            }
+            worst_step = worst_step.worst(classification);
         }
         if parse_classification(&self.classification)? != worst_step {
             return Err(AppError::invalid(
@@ -475,12 +503,25 @@ impl StepJson {
         if let Some(authorization) = &self.authorization {
             authorization.validate()?;
         }
+        if self.changed_accounts.len() > MAX_REPORT_CHANGED_ACCOUNTS {
+            return Err(AppError::invalid(format!(
+                "step {} contains too many changed accounts",
+                self.index
+            )));
+        }
+        let mut changed_accounts = BTreeSet::new();
         for changed in &self.changed_accounts {
             changed.validate()?;
+            if !changed_accounts.insert(changed.account.clone()) {
+                return Err(AppError::invalid(format!(
+                    "step {} contains duplicate changed account {}",
+                    self.index, changed.account
+                )));
+            }
         }
         let mut reason_classification = SafetyClassification::SupportedReachable;
         for reason in &self.reasons {
-            reason.validate()?;
+            reason.validate(self.index, &self.changed_accounts)?;
             reason_classification =
                 reason_classification.worst(reason_classification_for(&reason.kind)?);
         }
@@ -500,6 +541,93 @@ impl StepJson {
                 "step {} has an invalid applied flag for {}",
                 self.index, self.classification
             )));
+        }
+        match classification {
+            SafetyClassification::SupportedReachable => {
+                if !self.reasons.is_empty() {
+                    return Err(AppError::invalid(format!(
+                        "supported step {} cannot contain failure reasons",
+                        self.index
+                    )));
+                }
+                let authorization = self.authorization.as_ref().ok_or_else(|| {
+                    AppError::invalid(format!(
+                        "supported step {} must contain authorization findings",
+                        self.index
+                    ))
+                })?;
+                if !authorization.meets_configured_requirements() {
+                    return Err(AppError::invalid(format!(
+                        "supported step {} has unmet authorization findings",
+                        self.index
+                    )));
+                }
+            }
+            SafetyClassification::Blocked => {
+                let authorization = self.authorization.as_ref().ok_or_else(|| {
+                    AppError::invalid(format!(
+                        "blocked step {} must contain authorization findings",
+                        self.index
+                    ))
+                })?;
+                if authorization.meets_configured_requirements()
+                    || !self
+                        .reasons
+                        .iter()
+                        .any(|reason| reason.kind == "authorization_not_met")
+                {
+                    return Err(AppError::invalid(format!(
+                        "blocked step {} is inconsistent with its authorization findings",
+                        self.index
+                    )));
+                }
+            }
+            SafetyClassification::LockoutRisk => {
+                let authorization = self.authorization.as_ref().ok_or_else(|| {
+                    AppError::invalid(format!(
+                        "lockout-risk step {} must contain authorization findings",
+                        self.index
+                    ))
+                })?;
+                if !authorization.meets_configured_requirements()
+                    || !self
+                        .reasons
+                        .iter()
+                        .any(|reason| reason.kind == "administration_lost")
+                {
+                    return Err(AppError::invalid(format!(
+                        "lockout-risk step {} is inconsistent with its transition findings",
+                        self.index
+                    )));
+                }
+            }
+            SafetyClassification::InvalidTransition => {
+                let authorization = self.authorization.as_ref().ok_or_else(|| {
+                    AppError::invalid(format!(
+                        "invalid-transition step {} must contain authorization findings",
+                        self.index
+                    ))
+                })?;
+                if !authorization.meets_configured_requirements()
+                    || !self
+                        .reasons
+                        .iter()
+                        .any(|reason| reason.kind == "invalid_transition")
+                {
+                    return Err(AppError::invalid(format!(
+                        "invalid-transition step {} is inconsistent with its transition findings",
+                        self.index
+                    )));
+                }
+            }
+            SafetyClassification::Inconclusive => {
+                if self.reasons.is_empty() {
+                    return Err(AppError::invalid(format!(
+                        "inconclusive step {} must contain a reason",
+                        self.index
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -534,7 +662,7 @@ impl AuthorizationJson {
             )));
         }
         for finding in &self.findings {
-            finding.validate()?;
+            finding.validate(None)?;
         }
         let meets = self
             .findings
@@ -550,7 +678,67 @@ impl AuthorizationJson {
                 "authorization conclusion does not match its findings",
             ));
         }
+        if self.findings.is_empty() {
+            return Err(AppError::invalid(
+                "authorization report must contain a transaction-source finding",
+            ));
+        }
+        if self.findings.len() > MAX_REPORT_FINDINGS {
+            return Err(AppError::invalid(
+                "authorization report contains too many findings",
+            ));
+        }
+        for (index, finding) in self.findings.iter().enumerate() {
+            let expected_threshold = if index == 0 {
+                if finding.subject != "transaction source" {
+                    return Err(AppError::invalid(
+                        "first authorization finding must be the transaction source",
+                    ));
+                }
+                if finding.account != self.transaction_source {
+                    return Err(AppError::invalid(
+                        "transaction-source finding account disagrees with transaction_source",
+                    ));
+                }
+                "low"
+            } else {
+                let operation_index = index - 1;
+                let prefix = format!("operation {operation_index} (");
+                let kind = finding
+                    .subject
+                    .strip_prefix(&prefix)
+                    .and_then(|value| value.strip_suffix(')'))
+                    .ok_or_else(|| {
+                        AppError::invalid(format!(
+                            "authorization finding {index} has an invalid operation subject"
+                        ))
+                    })?;
+                match kind {
+                    "payment" => "medium",
+                    "bump-sequence" => "low",
+                    "account-merge" => "high",
+                    "set-options" => {
+                        if !matches!(finding.threshold.as_str(), "medium" | "high") {
+                            return Err(AppError::invalid(
+                                "set-options authorization must use medium or high threshold",
+                            ));
+                        }
+                        finding.threshold.as_str()
+                    }
+                    _ => {
+                        return Err(AppError::invalid(format!(
+                            "unsupported authorization operation kind {kind:?}"
+                        )));
+                    }
+                }
+            };
+            finding.validate(Some(expected_threshold))?;
+        }
         Ok(())
+    }
+
+    fn meets_configured_requirements(&self) -> bool {
+        self.conclusion == "meets_configured_requirements"
     }
 }
 
@@ -567,9 +755,16 @@ impl FindingJson {
         }
     }
 
-    fn validate(&self) -> Result<(), AppError> {
+    fn validate(&self, expected_threshold: Option<&str>) -> Result<(), AppError> {
         parse_key_or_account(&self.account, "finding account")?;
-        if !matches!(self.threshold.as_str(), "low" | "medium" | "high") {
+        if let Some(expected_threshold) = expected_threshold {
+            if self.threshold != expected_threshold {
+                return Err(AppError::invalid(format!(
+                    "finding threshold {:?} does not match expected {:?}",
+                    self.threshold, expected_threshold
+                )));
+            }
+        } else if !matches!(self.threshold.as_str(), "low" | "medium" | "high") {
             return Err(AppError::invalid(format!(
                 "unsupported finding threshold {:?}",
                 self.threshold
@@ -583,6 +778,35 @@ impl FindingJson {
                 "unsupported finding explanation {:?}",
                 self.explanation
             )));
+        }
+        if self.available_weight > MAX_CONFIGURED_WEIGHT {
+            return Err(AppError::invalid(
+                "finding available weight exceeds the modeled account limit",
+            ));
+        }
+        if self.required_weight > u64::from(u8::MAX) {
+            return Err(AppError::invalid(
+                "finding required weight exceeds the modeled threshold domain",
+            ));
+        }
+        let expected_meets =
+            self.available_weight >= self.required_weight && self.available_weight > 0;
+        if self.meets_requirement != expected_meets {
+            return Err(AppError::invalid(
+                "finding meets_requirement contradicts its weights",
+            ));
+        }
+        let expected_explanation = if expected_meets {
+            "requirement_met"
+        } else if self.available_weight < self.required_weight {
+            "missing_weight"
+        } else {
+            "no_matching_signer"
+        };
+        if self.explanation != expected_explanation {
+            return Err(AppError::invalid(
+                "finding explanation contradicts its weights",
+            ));
         }
         Ok(())
     }
@@ -625,6 +849,21 @@ impl ReachJson {
                 self.threshold, expected_threshold
             )));
         }
+        if self.required_weight > u64::from(u8::MAX) {
+            return Err(AppError::invalid(
+                "reachability required weight exceeds the modeled threshold domain",
+            ));
+        }
+        if self.configured_weight > MAX_CONFIGURED_WEIGHT {
+            return Err(AppError::invalid(
+                "reachability configured weight exceeds the modeled account limit",
+            ));
+        }
+        if self.available_weight > self.configured_weight {
+            return Err(AppError::invalid(
+                "reachability available weight exceeds configured weight",
+            ));
+        }
         if !matches!(
             self.status.as_str(),
             "reachable" | "requires_unavailable_signers" | "unreachable"
@@ -633,6 +872,19 @@ impl ReachJson {
                 "unsupported reachability status {:?}",
                 self.status
             )));
+        }
+        let expected_status =
+            if self.available_weight >= self.required_weight && self.available_weight > 0 {
+                "reachable"
+            } else if self.configured_weight >= self.required_weight && self.configured_weight > 0 {
+                "requires_unavailable_signers"
+            } else {
+                "unreachable"
+            };
+        if self.status != expected_status {
+            return Err(AppError::invalid(
+                "reachability status contradicts its weights",
+            ));
         }
         Ok(())
     }
@@ -712,7 +964,11 @@ impl ReasonJson {
         value
     }
 
-    fn validate(&self) -> Result<(), AppError> {
+    fn validate(
+        &self,
+        step_index: usize,
+        changed_accounts: &[ChangedAccountJson],
+    ) -> Result<(), AppError> {
         if self.message.is_empty() {
             return Err(AppError::invalid("analysis reason message cannot be empty"));
         }
@@ -722,26 +978,76 @@ impl ReasonJson {
                     .finding
                     .as_ref()
                     .ok_or_else(|| AppError::invalid("authorization_not_met needs a finding"))?;
-                finding.validate()?;
-                if self.status.is_none() {
+                finding.validate(None)?;
+                if finding.meets_requirement {
                     return Err(AppError::invalid(
-                        "authorization_not_met needs a reachability status",
+                        "authorization_not_met finding must be unmet",
                     ));
                 }
-                validate_status(self.status.as_deref().unwrap_or_default())?;
+                let status = self.status.as_deref().ok_or_else(|| {
+                    AppError::invalid("authorization_not_met needs a reachability status")
+                })?;
+                validate_status(status)?;
+                if status == "reachable" {
+                    return Err(AppError::invalid(
+                        "authorization_not_met cannot have reachable status",
+                    ));
+                }
+                if !self.unsupported_signer_types.is_empty()
+                    || self.account.is_some()
+                    || self.lockout_kind.is_some()
+                    || self.mismatch.is_some()
+                    || self.predecessor_step.is_some()
+                {
+                    return Err(AppError::invalid(
+                        "authorization_not_met contains unrelated fields",
+                    ));
+                }
             }
             "authorization_undecidable" => {
-                self.finding
-                    .as_ref()
-                    .ok_or_else(|| AppError::invalid("authorization_undecidable needs a finding"))?
-                    .validate()?;
-                if self.unsupported_signer_types.is_empty() {
+                let finding = self.finding.as_ref().ok_or_else(|| {
+                    AppError::invalid("authorization_undecidable needs a finding")
+                })?;
+                finding.validate(None)?;
+                if finding.meets_requirement {
+                    return Err(AppError::invalid(
+                        "authorization_undecidable finding must be unmet",
+                    ));
+                }
+                if self.unsupported_signer_types.is_empty()
+                    || self.unsupported_signer_types.len() > MAX_REPORT_UNSUPPORTED_SIGNERS
+                {
                     return Err(AppError::invalid(
                         "authorization_undecidable needs unsupported signer types",
                     ));
                 }
+                validate_unsupported_signer_types(&self.unsupported_signer_types)?;
+                if self.status.is_some()
+                    || self.account.is_some()
+                    || self.lockout_kind.is_some()
+                    || self.mismatch.is_some()
+                    || self.predecessor_step.is_some()
+                {
+                    return Err(AppError::invalid(
+                        "authorization_undecidable contains unrelated fields",
+                    ));
+                }
             }
-            "invalid_transition" | "transition_unresolved" | "evidence_insufficient" => {}
+            "invalid_transition" | "transition_unresolved" | "evidence_insufficient" => {
+                if self.finding.is_some()
+                    || self.status.is_some()
+                    || !self.unsupported_signer_types.is_empty()
+                    || self.account.is_some()
+                    || self.lockout_kind.is_some()
+                    || self.mismatch.is_some()
+                    || self.predecessor_step.is_some()
+                {
+                    return Err(AppError::invalid(format!(
+                        "{} reason contains unrelated fields",
+                        self.kind
+                    )));
+                }
+            }
             "administration_lost" => {
                 parse_key_or_account(
                     self.account
@@ -754,17 +1060,79 @@ impl ReasonJson {
                     .as_deref()
                     .ok_or_else(|| AppError::invalid("administration_lost needs a lockout kind"))?;
                 validate_lockout_kind(lockout)?;
+                let changed = changed_accounts
+                    .iter()
+                    .find(|changed| changed.account == self.account.as_deref().unwrap_or_default())
+                    .ok_or_else(|| {
+                        AppError::invalid(
+                            "administration_lost account is absent from changed_accounts",
+                        )
+                    })?;
+                let matches_reach = match lockout {
+                    "high_threshold_requires_unavailable_signers" => {
+                        changed.high.status == "requires_unavailable_signers"
+                    }
+                    "high_threshold_unreachable" => changed.high.status == "unreachable",
+                    "low_threshold_not_reachable" => {
+                        changed.high.status == "reachable"
+                            && changed.low.status == "requires_unavailable_signers"
+                    }
+                    "low_threshold_permanently_unreachable" => {
+                        changed.high.status == "reachable" && changed.low.status == "unreachable"
+                    }
+                    _ => false,
+                };
+                if !matches_reach {
+                    return Err(AppError::invalid(
+                        "administration_lost kind contradicts changed-account reachability",
+                    ));
+                }
+                if self.finding.is_some()
+                    || self.status.is_some()
+                    || !self.unsupported_signer_types.is_empty()
+                    || self.mismatch.is_some()
+                    || self.predecessor_step.is_some()
+                {
+                    return Err(AppError::invalid(
+                        "administration_lost contains unrelated fields",
+                    ));
+                }
             }
             "expectation_mismatch" => {
                 self.mismatch
                     .as_ref()
                     .ok_or_else(|| AppError::invalid("expectation_mismatch needs mismatch data"))?
                     .validate()?;
+                if self.finding.is_some()
+                    || self.status.is_some()
+                    || !self.unsupported_signer_types.is_empty()
+                    || self.account.is_some()
+                    || self.lockout_kind.is_some()
+                    || self.predecessor_step.is_some()
+                {
+                    return Err(AppError::invalid(
+                        "expectation_mismatch contains unrelated fields",
+                    ));
+                }
             }
             "predecessor_not_applied" => {
-                if self.predecessor_step.is_none() {
+                let predecessor = self.predecessor_step.ok_or_else(|| {
+                    AppError::invalid("predecessor_not_applied needs predecessor_step")
+                })?;
+                if predecessor >= step_index {
                     return Err(AppError::invalid(
-                        "predecessor_not_applied needs predecessor_step",
+                        "predecessor_not_applied must reference an earlier step",
+                    ));
+                }
+                if self.finding.is_some()
+                    || self.status.is_some()
+                    || !self.unsupported_signer_types.is_empty()
+                    || self.account.is_some()
+                    || self.lockout_kind.is_some()
+                    || self.mismatch.is_some()
+                {
+                    return Err(AppError::invalid(
+                        "predecessor_not_applied contains unrelated fields",
                     ));
                 }
             }
@@ -1420,6 +1788,46 @@ fn reason_classification_for(kind: &str) -> Result<SafetyClassification, AppErro
             "unsupported analysis reason kind {kind:?}"
         ))),
     }
+}
+
+fn validate_not_evaluated_step(step: &StepJson, predecessor: usize) -> Result<(), AppError> {
+    if step.classification != SafetyClassification::Inconclusive.as_str()
+        || step.applied
+        || step.authorization.is_some()
+        || !step.changed_accounts.is_empty()
+        || step.reasons.len() != 1
+        || step.reasons[0].kind != "predecessor_not_applied"
+        || step.reasons[0].predecessor_step != Some(predecessor)
+    {
+        return Err(AppError::invalid(format!(
+            "step {} contradicts halted predecessor step {}",
+            step.index, predecessor
+        )));
+    }
+    Ok(())
+}
+
+fn validate_unsupported_signer_types(values: &[String]) -> Result<(), AppError> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        let valid = match value.as_str() {
+            "pre_auth_tx" | "hash_x" | "ed25519_signed_payload" => true,
+            value => value
+                .strip_prefix("unknown:")
+                .is_some_and(|code| code.parse::<u32>().is_ok()),
+        };
+        if !valid {
+            return Err(AppError::invalid(format!(
+                "unsupported signer disclosure {value:?}"
+            )));
+        }
+        if !seen.insert(value) {
+            return Err(AppError::invalid(format!(
+                "duplicate unsupported signer disclosure {value:?}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn parse_key_or_account(value: &str, field: &str) -> Result<(), AppError> {
