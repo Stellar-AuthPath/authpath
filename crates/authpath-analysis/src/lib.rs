@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rotation;
+
 use std::{collections::BTreeMap, fmt};
 
 use authpath_model::{
