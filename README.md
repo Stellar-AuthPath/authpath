@@ -30,6 +30,11 @@ classified `SUPPORTED_REACHABLE`, `INCONCLUSIVE`, `LOCKOUT_RISK`,
 `INVALID_TRANSITION` or `BLOCKED`. Every result is a conditional model, never
 a verified on-chain outcome, and no result means an account is safe.
 
+Phase C5 independently audits the supported protocol boundary, hardens
+untrusted report validation and exercises adversarial input and filesystem
+paths. The [C5 audit record](docs/c5-audit.md) distinguishes confirmed
+corrections from behavior that remains outside the model.
+
 The implementation is not a wallet, signer, ledger verifier, or transaction
 submission system. It must not be used as proof of real authorization or to
 protect real funds. Configured signer weight and caller-declared availability
