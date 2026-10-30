@@ -2,7 +2,7 @@
 
 This directory is the documentation entry point for Stellar AuthPath.
 
-- [Initial architecture](architecture.md) — Phase C1/C2 scope, crate
+- [Initial architecture](architecture.md) — Phase C1–C3 scope, crate
   boundaries, validation rules, threshold classifications, and unresolved
   specification inputs.
 

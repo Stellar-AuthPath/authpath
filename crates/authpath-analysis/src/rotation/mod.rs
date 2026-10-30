@@ -1,10 +1,11 @@
 //! Multi-transaction rotation planning for classic Stellar accounts.
 //!
-//! A rotation plan describes an ordered sequence of proposed transactions
-//! together with explicit signer-availability declarations. The types in this
-//! module validate plan structure only; they do not apply or authorize
-//! anything. Results derived from a plan are conditional model outputs, never
-//! verified on-chain facts.
+//! A [`RotationPlan`] describes an ordered sequence of proposed transactions
+//! together with explicit signer-availability declarations.
+//! [`analyze_rotation`] authorizes each transaction against the state before
+//! it, conditionally applies its authorization-relevant changes, and checks
+//! that changed accounts stay administrable. Results are conditional model
+//! outputs, never verified on-chain facts.
 
 pub mod classification;
 pub mod engine;

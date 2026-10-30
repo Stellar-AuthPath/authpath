@@ -4,7 +4,8 @@
 
 Phase C1 established the repository foundation and account configuration
 model. Phase C2 adds a conservative authorization-threshold analysis engine
-for classic Stellar transactions.
+for classic Stellar transactions. Phase C3 adds a conditional rotation safety
+engine over sequences of such transactions.
 
 The checkout and the public `Stellar-AuthPath/authpath` repository were empty
 at initialization. No approved AuthPath architecture document or
@@ -28,6 +29,12 @@ choosing the narrow C1 types:
 - [stellar-core TransactionFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/TransactionFrame.cpp)
   checks the transaction source at the low threshold and evaluates each
   operation source independently.
+- [stellar-core SignatureChecker](https://github.com/stellar/stellar-core/blob/master/src/transactions/SignatureChecker.cpp)
+  accumulates signer weight and compares it with the needed weight only after
+  a signature matches a listed signer. C3 relied on this to correct C2's
+  handling of a zero threshold.
+- [stellar-xdr](https://github.com/stellar/stellar-xdr) fixes `MAX_SIGNERS`
+  at 20 and `MAX_OPS_PER_TX` at 100.
 - [stellar-core SetOptionsOpFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/SetOptionsOpFrame.cpp)
   classifies signer/master-weight/threshold changes as high threshold and
   other supported SetOptions variations as medium threshold.
@@ -151,8 +158,8 @@ are deduplicated.
 The analyzer reuses the input snapshots for every operation. It does not
 apply a SetOptions change while analyzing a later operation in the same
 transaction; CAP-2 requires signature checks before operation side effects.
-State changes visible to later transactions are outside C2 and belong to the
-future rotation/simulation work.
+State changes visible to later transactions are outside C2 and are handled by
+the C3 rotation engine below.
 
 ### Safety meanings and limitations
 
@@ -166,9 +173,119 @@ C2 does not model balances, reserves, sequence numbers, fees, preconditions,
 asset validity, operation effects, transaction serialization, cryptographic
 signatures, live network state, or post-transaction account configuration.
 
+## C3 rotation safety engine
+
+C3 lives in the `rotation` module of `authpath-analysis` and reuses the C1
+model and the C2 `analyze` function unchanged.
+
+### C2 correction made in C3
+
+C2 reported a requirement as met when available weight equalled a threshold of
+zero, including when no signer was available. stellar-core compares weight
+with the needed weight only after a signature matches a listed signer, and the
+master key is listed only while its weight is non-zero. A threshold of zero
+therefore still needs one matching signer of positive weight. C2 now reports
+`NoMatchingSigner` in that case.
+
+### Plan representation
+
+A `RotationPlan` holds the initial validated snapshots, the declared
+available signer identities, and an ordered list of `PlannedTransaction`s.
+Each planned transaction carries a C2 `TransactionDescription`, an explicit
+availability declaration for every positive-weight signer change, an optional
+reserve declaration, and optional expected resulting configurations.
+
+Rejected at construction: empty plans and plans over 256 transactions (an
+AuthPath resource bound, not a protocol limit); more than 100 operations per
+transaction (protocol limit); AccountMerge and any unknown operation; empty
+SetOptions; a signer equal to its own operation source; missing, duplicate or
+mismatched availability declarations; and expected configurations that list
+more than 20 signers, zero-weight signers, duplicates, or the master key.
+
+Declared signer kinds the model cannot evaluate (pre-authorized transaction,
+hash-X, signed payload) are retained rather than coerced and make unmet
+requirements `INCONCLUSIVE`.
+
+### Supported and unsupported transitions
+
+| Operation | Treatment |
+| --- | --- |
+| SetOptions: master-key weight | Applied |
+| SetOptions: low, medium, high thresholds | Applied |
+| SetOptions: signer add, re-weight, remove (weight 0) | Applied; 20-signer limit enforced; removing an absent signer is a no-op |
+| SetOptions: flags, inflation destination, home domain | Accepted, no authorization effect modeled |
+| Payment, BumpSequence | Authorized; no authorization-state effect |
+| AccountMerge and all other operations | Rejected at plan construction |
+
+Operations in one transaction apply in order, and the transaction is atomic.
+Each operation applies to its own source account, so a plan may change several
+accounts and use a transaction source different from an operation source.
+
+### Step semantics
+
+For each transaction, in order:
+
+1. C2 authorizes the transaction source at its low threshold and each
+   operation source at the operation's threshold, against the state *before*
+   the transaction. All operations use the pre-transaction state, matching
+   stellar-core's up-front signature checks.
+2. If authorization is met, the changes are applied conditionally, assuming the
+   transaction succeeds.
+3. Each account whose configuration changed is checked for administrative
+   reach (below).
+4. The result becomes the starting state of the next transaction.
+
+The first step that is unauthorized, invalid, or lacks evidence halts the
+chain. Later steps are reported `INCONCLUSIVE` with `PredecessorNotApplied`
+rather than being evaluated against a state that was never reached.
+
+### Administrative reach and lockout
+
+Reachability compares weight, not signer counts. For each threshold, the
+declared-available weight is compared with the threshold (and a matching
+positive-weight signer is required). A threshold is:
+
+- `Reachable` when declared-available signers meet it;
+- `RequiresUnavailableSigners` when they do not, but the account's full
+  configured weight, including signers declared unavailable, would; or
+- `Unreachable` when no configured signer set can meet it.
+
+A changed account that loses high-threshold reach is a `LOCKOUT_RISK`, with
+the kind recorded. Loss of low-threshold reach while high remains is also
+reported, because the account could then administer itself only through a
+different transaction source. A single sufficient signer is not a lockout.
+`Unreachable` is permanent only if the snapshot is complete; the model cannot
+see signer kinds C1 does not represent.
+
+### Classifications
+
+| Classification | Meaning |
+| --- | --- |
+| `SUPPORTED_REACHABLE` | Under the declared assumptions the step is authorized and every changed account stays administrable. |
+| `INCONCLUSIVE` | Missing or unsupported evidence, contradictory declarations, an expectation that disagrees with the model, or an unevaluated predecessor. |
+| `LOCKOUT_RISK` | The step is authorized but a changed account can no longer be administered by the declared signers. |
+| `INVALID_TRANSITION` | The change exceeds the signer limit or contradicts a declared reserve shortfall. |
+| `BLOCKED` | A supported authorization requirement is not met by the declared signers. |
+
+The plan classification is the most severe step classification. No category
+means an account is safe. `SUPPORTED_REACHABLE` is a statement about the model.
+
+### What a result is not
+
+Every report is labeled `ConditionalModel`, `verified_on_chain()` is always
+`false`, and the following are never established: signature validity,
+private-key possession, snapshot accuracy against a ledger, reserves and
+balances (`SET_OPTIONS_LOW_RESERVE`, subentry and sponsorship limits),
+sequence numbers, fees, preconditions, ledger acceptance and ordering,
+concurrent changes by other parties between planned transactions, or any
+effect other than authorization configuration. A caller may declare a reserve
+shortfall, which is treated as given; the engine never derives one.
+Derived configurations are marked as modeled and are never ledger-backed.
+
 ## Explicit non-goals
 
-C2 does not implement the multi-transaction rotation planner, CLI,
-ledger/network adapters, private-key storage, transaction signing or
-submission, or any hosted service. The full authorization engine remains
-incomplete.
+C3 does not implement a CLI, ledger/network adapters, private-key storage,
+transaction signing or submission, wallet connections, or any hosted service.
+Pre-authorized transaction, hash-X and signed-payload signers, AccountMerge,
+fee-bump transactions, sponsorship and muxed accounts are not modeled. The
+full authorization engine remains incomplete.
