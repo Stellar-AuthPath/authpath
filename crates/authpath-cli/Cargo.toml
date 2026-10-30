@@ -1,0 +1,28 @@
+[package]
+name = "authpath-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+description = "Offline command-line inspection and reporting for Stellar AuthPath models."
+
+[[bin]]
+name = "authpath"
+path = "src/main.rs"
+
+[dependencies]
+authpath-analysis = { path = "../authpath-analysis" }
+authpath-model = { path = "../authpath-model" }
+clap = { version = "4.6.7", default-features = false, features = [
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "usage",
+] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
