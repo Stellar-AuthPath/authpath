@@ -107,7 +107,10 @@ inconclusive plan into a successful rotation: those classifications remain in
 - `--output PATH` installs output atomically beside the requested path using a
   no-replace installation when `--force` is absent.
 - Existing output files are rejected. `--force` is required to replace one.
-  A failed output operation does not install a partial report.
+  A failed output operation does not install a partial report. No-replace
+  installation relies on the platform's atomic hard-link operation; if that
+  operation is unavailable, the CLI reports an operational error instead of
+  weakening the guarantee.
 
 Without `--output`, output is written to stdout. Errors are written to stderr.
 
@@ -220,4 +223,4 @@ ledger acceptance, concurrent changes, unsupported signer kinds, non-
 authorization operation effects, or live network state. Configured
 authorization sufficiency, conditional rotation modeling, and offline
 configuration comparison are separate claims. Genuine independently
-verified ledger evidence is not available in C4.
+verified ledger evidence is not available in the current CLI.

@@ -320,10 +320,15 @@ verification. Comparison reports identify their
 provenance. An exact comparison is not cryptographic verification and is not
 proof that a ledger executed a transaction.
 
-Output files are installed through a same-directory temporary file, sync, and
-rename. Existing destinations require explicit `--force`; input files are
-read-only from the CLI's perspective. The CLI has no key, wallet, network,
-database, hosted-service, or transaction-submission surface.
+Output files are written and synced in a same-directory temporary file. Without
+`--force`, the CLI atomically creates the destination directory entry with a
+hard link and rejects an existing or concurrently created destination; it does
+not fall back to an existence check followed by rename. With `--force`, an
+explicit replacement uses the platform's rename semantics. If no-replace hard
+links are unsupported, the CLI returns an operational error and removes its
+temporary file. Input files are read-only from the CLI's perspective. The CLI
+has no key, wallet, network, database, hosted-service, or transaction-
+submission surface.
 
 ## Explicit non-goals
 

@@ -5,6 +5,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 use authpath_model::AccountId;
 
 static TEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
@@ -407,6 +410,35 @@ fn malformed_json_is_invalid_input() {
 }
 
 #[test]
+fn malformed_utf8_is_invalid_input_without_a_panic() {
+    let directory = TestDirectory::new();
+    let input = directory.file("malformed-utf8.json");
+    fs::write(&input, [b'{', 0xff, b'}']).expect("write malformed UTF-8 input");
+    let input = input.to_string_lossy().into_owned();
+    let output = run(&["inspect", &input]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("malformed JSON"));
+}
+
+#[test]
+fn deeply_nested_json_is_rejected_without_a_panic() {
+    let directory = TestDirectory::new();
+    let mut input_json = String::with_capacity(8_000);
+    for _ in 0..2_000 {
+        input_json.push('[');
+    }
+    input_json.push_str("null");
+    for _ in 0..2_000 {
+        input_json.push(']');
+    }
+    let input = directory.write("deep.json", &input_json);
+    let input = input.to_string_lossy().into_owned();
+    let output = run(&["inspect", &input]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("malformed JSON"));
+}
+
+#[test]
 fn inspect_rejects_unsupported_schema_version() {
     let directory = TestDirectory::new();
     let input = directory.write(
@@ -698,6 +730,137 @@ fn verify_preserves_lockout_risk_when_matching_modeled_configuration() {
 }
 
 #[test]
+fn explain_and_verify_accept_applied_lockout_followed_by_an_evaluated_step() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let later_source = account(2);
+    let replacement = account(3);
+    let initial = format!(
+        "{},{}",
+        snapshot_custom(
+            &account_id,
+            1,
+            (1, 1, 1),
+            &[(&replacement, 1, "unavailable")],
+            Some("Test Network"),
+        ),
+        snapshot(&later_source, 1, Some("Test Network")),
+    );
+    let lockout = transaction(&account_id, &set_master_operation(0), "", "");
+    let later = transaction(&later_source, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "applied-lockout-plan.json",
+        "applied-lockout-report.json",
+        &plan(
+            &initial,
+            &available_ed25519(&[&account_id, &later_source]),
+            &[lockout, later],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(report_json["classification"], "LOCKOUT_RISK");
+    assert_eq!(report_json["steps"][0]["classification"], "LOCKOUT_RISK");
+    assert_eq!(report_json["steps"][0]["applied"], true);
+    assert_eq!(
+        report_json["steps"][1]["classification"],
+        "SUPPORTED_REACHABLE"
+    );
+    assert_eq!(report_json["steps"][1]["applied"], true);
+
+    let report_string = report.to_string_lossy().into_owned();
+    let explained = run(&["--format", "json", "explain", &report_string]);
+    assert_eq!(
+        explained.status.code(),
+        Some(10),
+        "{}",
+        error_text(&explained)
+    );
+    let explanation: serde_json::Value = serde_json::from_str(&output_text(&explained)).unwrap();
+    assert_eq!(explanation["classification"], "LOCKOUT_RISK");
+
+    let observed = directory.write(
+        "applied-lockout-observed.json",
+        &observed_custom(
+            &account_id,
+            0,
+            (1, 1, 1),
+            &[(&replacement, 1, "unavailable")],
+            Some("Test Network"),
+        ),
+    );
+    let observed_string = observed.to_string_lossy().into_owned();
+    let compared = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report_string,
+        "--observed",
+        &observed_string,
+    ]);
+    assert_eq!(
+        compared.status.code(),
+        Some(10),
+        "{}",
+        error_text(&compared)
+    );
+    let comparison: serde_json::Value = serde_json::from_str(&output_text(&compared)).unwrap();
+    assert_eq!(comparison["result"], "LOCKOUT_RISK");
+    assert_eq!(comparison["configuration_result"], "MATCHED");
+    assert_eq!(comparison["completion_status"], "not_complete");
+}
+
+#[test]
+fn explain_accepts_applied_lockout_followed_by_a_blocked_transaction() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let replacement = account(3);
+    let initial = snapshot_custom(
+        &account_id,
+        1,
+        (1, 1, 1),
+        &[(&replacement, 1, "unavailable")],
+        Some("Test Network"),
+    );
+    let lockout = transaction(&account_id, &set_master_operation(0), "", "");
+    let blocked = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "lockout-then-blocked-plan.json",
+        "lockout-then-blocked-report.json",
+        &plan(
+            &initial,
+            &available_ed25519(&[&account_id]),
+            &[lockout, blocked],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(report_json["classification"], "BLOCKED");
+    assert_eq!(report_json["steps"][0]["classification"], "LOCKOUT_RISK");
+    assert_eq!(report_json["steps"][0]["applied"], true);
+    assert_eq!(report_json["steps"][1]["classification"], "BLOCKED");
+    assert_eq!(report_json["steps"][1]["applied"], false);
+
+    let report_string = report.to_string_lossy().into_owned();
+    let explained = run(&["--format", "json", "explain", &report_string]);
+    assert_eq!(
+        explained.status.code(),
+        Some(10),
+        "{}",
+        error_text(&explained)
+    );
+    let explanation: serde_json::Value = serde_json::from_str(&output_text(&explained)).unwrap();
+    assert_eq!(explanation["classification"], "BLOCKED");
+}
+
+#[test]
 fn verify_preserves_invalid_transition_when_configuration_matches_unapplied_plan() {
     let directory = TestDirectory::new();
     let account_id = account(1);
@@ -745,6 +908,56 @@ fn verify_preserves_invalid_transition_when_configuration_matches_unapplied_plan
     assert_eq!(json["configuration_result"], "MATCHED");
     assert_eq!(json["plan_classification"], "INVALID_TRANSITION");
     assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
+fn explain_accepts_engine_generated_invalid_transition_with_dependent_step() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let added = account(2);
+    let invalid = transaction_with_reserve(
+        &account_id,
+        &set_signer_operation(&added, 1),
+        &signer_declaration(0, &added, "available"),
+        "declared_insufficient",
+        "",
+    );
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "invalid-dependent-plan.json",
+        "invalid-dependent-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            &available_ed25519(&[&account_id, &added]),
+            &[invalid, dependent],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(report_json["classification"], "INVALID_TRANSITION");
+    assert_eq!(
+        report_json["steps"][0]["classification"],
+        "INVALID_TRANSITION"
+    );
+    assert_eq!(report_json["steps"][0]["applied"], false);
+    assert_eq!(
+        report_json["steps"][1]["reasons"][0]["kind"],
+        "predecessor_not_applied"
+    );
+
+    let report_string = report.to_string_lossy().into_owned();
+    let explained = run(&["--format", "json", "explain", &report_string]);
+    assert_eq!(
+        explained.status.code(),
+        Some(10),
+        "{}",
+        error_text(&explained)
+    );
+    let explanation: serde_json::Value = serde_json::from_str(&output_text(&explained)).unwrap();
+    assert_eq!(explanation["classification"], "INVALID_TRANSITION");
 }
 
 #[test]
@@ -980,6 +1193,256 @@ fn explain_rejects_contradictory_step_completion_metadata() {
 }
 
 #[test]
+fn explain_rejects_applied_success_after_a_halted_predecessor() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let mismatch = transaction(
+        &account_id,
+        &set_master_operation(0),
+        "",
+        &expected_account(&account_id, 1, (1, 1, 1), &[]),
+    );
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let plan_json = plan(
+        &initial,
+        &available_ed25519(&[&account_id]),
+        &[mismatch, dependent],
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "halted-report-plan.json",
+        "halted-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    let predecessor_authorization = report_json["steps"][0]["authorization"].clone();
+    report_json["steps"][1]["classification"] =
+        serde_json::Value::String("SUPPORTED_REACHABLE".to_owned());
+    report_json["steps"][1]["applied"] = serde_json::Value::Bool(true);
+    report_json["steps"][1]["authorization"] = predecessor_authorization;
+    report_json["steps"][1]["reasons"] = serde_json::json!([]);
+    report_json["classification"] = serde_json::Value::String("INCONCLUSIVE".to_owned());
+    let tampered = directory.write(
+        "applied-after-halt.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("contradicts halted predecessor"));
+}
+
+#[test]
+fn explain_rejects_applied_success_after_a_blocked_predecessor() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let supported_report = write_report(&directory, &account_id);
+    let supported_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&supported_report).unwrap()).unwrap();
+    let blocked = transaction(&account_id, payment_operation(), "", "");
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "blocked-successor-plan.json",
+        "blocked-successor-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            "",
+            &[blocked, dependent],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][1]["classification"] =
+        serde_json::Value::String("SUPPORTED_REACHABLE".to_owned());
+    report_json["steps"][1]["applied"] = serde_json::Value::Bool(true);
+    report_json["steps"][1]["authorization"] = supported_json["steps"][0]["authorization"].clone();
+    report_json["steps"][1]["reasons"] = serde_json::json!([]);
+    let tampered = directory.write(
+        "applied-after-blocked.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("contradicts halted predecessor"));
+}
+
+#[test]
+fn explain_rejects_tampered_finding_arithmetic() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report(&directory, &account_id);
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["authorization"]["findings"][0]["available_weight"] =
+        serde_json::Value::Number(0.into());
+    let tampered = directory.write(
+        "tampered-finding.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("meets_requirement contradicts"));
+}
+
+#[test]
+fn explain_rejects_reason_finding_not_present_in_authorization_report() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report_for_plan(
+        &directory,
+        "reason-plan.json",
+        "reason-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            "",
+            &[transaction(&account_id, payment_operation(), "", "")],
+        ),
+    )
+    .0;
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["reasons"][0]["finding"]["account"] =
+        serde_json::Value::String(account(2));
+    let tampered = directory.write(
+        "reason-finding-mismatch.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("authorization reasons do not match"));
+}
+
+#[test]
+fn explain_rejects_hidden_unsupported_signer_disclosure() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let payment = transaction(&account_id, payment_operation(), "", "");
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "unsupported-report-plan.json",
+        "unsupported-report.json",
+        &plan(
+            &initial,
+            r#"{"kind":"hash_x","key":null,"code":null}"#,
+            &[payment],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["unsupported_signer_types"] = serde_json::json!([]);
+    let tampered = directory.write(
+        "hidden-unsupported-signer.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("hides unsupported signer disclosure"));
+}
+
+#[test]
+fn explain_rejects_equal_weights_disguised_as_a_mismatch() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let mismatch = transaction(
+        &account_id,
+        &set_master_operation(0),
+        "",
+        &expected_account(&account_id, 1, (1, 1, 1), &[]),
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "equal-mismatch-plan.json",
+        "equal-mismatch-report.json",
+        &plan(
+            &snapshot(&account_id, 1, Some("Test Network")),
+            &available_ed25519(&[&account_id]),
+            &[mismatch],
+        ),
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    let expected =
+        report_json["steps"][0]["reasons"][0]["mismatch"]["expected_master_key_weight"].clone();
+    report_json["steps"][0]["reasons"][0]["mismatch"]["modeled_master_key_weight"] = expected;
+    let tampered = directory.write(
+        "equal-mismatch-tampered.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("must contain different weights"));
+}
+
+#[test]
+fn explain_rejects_tampered_reachability_arithmetic() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let added = account(2);
+    let initial = snapshot_custom(&account_id, 1, (1, 2, 1), &[], Some("Test Network"));
+    let add = transaction(
+        &account_id,
+        &set_signer_operation(&added, 1),
+        &signer_declaration(0, &added, "available"),
+        &expected_account(&account_id, 1, (1, 2, 1), &[(&added, 1)]),
+    );
+    let plan_json = plan(&initial, &available_ed25519(&[&account_id, &added]), &[add]);
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "reachability-report-plan.json",
+        "reachability-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(0));
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["changed_accounts"][0]["medium"]["available_weight"] =
+        serde_json::Value::Number(99.into());
+    let tampered = directory.write(
+        "tampered-reachability.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("exceeds configured weight"));
+}
+
+#[test]
+fn explain_rejects_removed_fixed_limitations() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report(&directory, &account_id);
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["limitations"].as_array_mut().unwrap().pop();
+    let tampered = directory.write(
+        "hidden-limitations.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let tampered = tampered.to_string_lossy().into_owned();
+    let output = run(&["explain", &tampered]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("fixed conditional-model disclosures"));
+}
+
+#[test]
 fn missing_input_files_are_operational_failures() {
     let directory = TestDirectory::new();
     let missing = directory.file("does-not-exist.json");
@@ -1102,4 +1565,80 @@ fn report_output_failure_does_not_install_partial_file() {
     assert_eq!(output.status.code(), Some(3));
     assert!(!missing_parent.exists());
     assert!(!directory.path.join("missing").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_input_is_read_without_modifying_the_target() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let target = directory.write(
+        "account-target.json",
+        &snapshot(&account_id, 1, Some("Test Network")),
+    );
+    let link = directory.file("account-link.json");
+    symlink(&target, &link).expect("create input symlink");
+    let link = link.to_string_lossy().into_owned();
+
+    let output = run(&["inspect", &link]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output_text(&output).contains(&format!("account: {account_id}")));
+    assert!(target.is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn no_force_output_rejects_existing_symlink_without_touching_target() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let plan = directory.write("symlink-output-plan.json", &no_change_plan(&account_id));
+    let plan = plan.to_string_lossy().into_owned();
+    let target = directory.file("existing-target.json");
+    fs::write(&target, b"keep").expect("write existing target");
+    let destination = directory.file("result-link.json");
+    symlink(&target, &destination).expect("create output symlink");
+    let destination_string = destination.to_string_lossy().into_owned();
+
+    let output = run(&[
+        "--format",
+        "json",
+        "--output",
+        &destination_string,
+        "analyze",
+        &plan,
+    ]);
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(destination.is_symlink());
+    assert_eq!(fs::read(&target).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn force_output_replaces_symlink_entry_without_overwriting_target() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let plan = directory.write("force-symlink-plan.json", &no_change_plan(&account_id));
+    let plan = plan.to_string_lossy().into_owned();
+    let target = directory.file("force-existing-target.json");
+    fs::write(&target, b"keep").expect("write existing target");
+    let destination = directory.file("force-result-link.json");
+    symlink(&target, &destination).expect("create output symlink");
+    let destination_string = destination.to_string_lossy().into_owned();
+
+    let output = run(&[
+        "--format",
+        "json",
+        "--force",
+        "--output",
+        &destination_string,
+        "analyze",
+        &plan,
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!destination.is_symlink());
+    assert_eq!(fs::read(&target).unwrap(), b"keep");
+    assert!(!fs::read(&destination).unwrap().is_empty());
 }
