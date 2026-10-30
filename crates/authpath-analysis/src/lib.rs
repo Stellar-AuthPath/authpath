@@ -377,6 +377,10 @@ pub enum DeclaredSigner {
 }
 
 /// A deduplicated set of caller-declared available Ed25519 identities.
+///
+/// Membership is an explicit availability assertion, not proof of private-key
+/// possession. Rotation reachability also requires the configured signer's
+/// account-state availability declaration to be `Available`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AvailableSigners {
     keys: std::collections::BTreeSet<Ed25519PublicKey>,

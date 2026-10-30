@@ -192,10 +192,18 @@ therefore still needs one matching signer of positive weight. C2 now reports
 A `RotationPlan` holds the initial validated snapshots, the declared
 available signer identities, and an ordered list of `PlannedTransaction`s.
 Each planned transaction carries a C2 `TransactionDescription`, an explicit
-availability declaration for every positive-weight signer change, an optional
-reserve declaration, and optional caller-supplied expected resulting
-configurations. These expectations are assertions about the intended result,
-not proof that a ledger executed the transaction.
+post-operation availability declaration for every positive-weight signer
+change, an optional reserve declaration, and optional caller-supplied expected
+resulting configurations. These expectations are assertions about the
+intended result, not proof that a ledger executed the transaction.
+
+The plan-wide Ed25519 identity set is the caller's explicit declaration of
+identities available throughout the sequence. A configured signer contributes
+to reachability only when its account-state availability declaration is also
+`Available`; reachability uses this intersection and never infers possession
+from weight or a public key. For a positive-weight addition or reweight,
+`Available` must be present in the plan-wide set and `Unavailable` must be
+absent. A contradiction is `INCONCLUSIVE`, not an implicit possession claim.
 
 Rejected at construction: empty plans and plans over 256 transactions (an
 AuthPath resource bound, not a protocol limit); more than 100 operations per
@@ -206,7 +214,8 @@ more than 20 signers, zero-weight signers, duplicates, or the master key.
 
 Declared signer kinds the model cannot evaluate (pre-authorized transaction,
 hash-X, signed payload) are retained rather than coerced and make unmet
-requirements `INCONCLUSIVE`.
+requirements `INCONCLUSIVE`. No availability declaration proves possession of
+any private key.
 
 ### Supported and unsupported transitions
 
@@ -231,21 +240,24 @@ For each transaction, in order:
    operation source at the operation's threshold, against the state *before*
    the transaction. All operations use the pre-transaction state, matching
    stellar-core's up-front signature checks.
-2. If authorization is met, the changes are applied conditionally, assuming the
-   transaction succeeds.
-3. Any caller-supplied expected configuration is compared with the modeled
+2. If authorization is met, availability declarations are checked against the
+   plan-wide identity set. A contradiction is `INCONCLUSIVE` and halts
+   dependent analysis.
+3. The changes are applied conditionally, assuming the transaction succeeds.
+4. Any caller-supplied expected configuration is compared with the modeled
    result. A mismatch is `INCONCLUSIVE`; the candidate result is not accepted
    into the sequential model because the expectation is an assertion, not
    ledger evidence.
-4. Each account whose configuration changed is checked for administrative
+5. Each account whose configuration changed is checked for administrative
    reach (below).
-5. Only a result with no expectation mismatch becomes the starting state of
-   the next transaction.
+6. Only a result with no availability or expectation mismatch becomes the
+   starting state of the next transaction.
 
 The first step that is unauthorized, invalid, lacks evidence, or has an
-expectation mismatch halts the chain. Later steps are reported `INCONCLUSIVE`
-with `PredecessorNotApplied` rather than being evaluated against a state that
-was never authoritatively accepted by the model.
+availability or expectation mismatch halts the chain. Later steps are
+reported `INCONCLUSIVE` with `PredecessorNotApplied` rather than being
+evaluated against a state that was never authoritatively accepted by the
+model.
 
 ### Administrative reach and lockout
 

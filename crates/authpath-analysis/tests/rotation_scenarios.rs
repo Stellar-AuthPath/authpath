@@ -583,7 +583,7 @@ fn full_account() -> AccountSnapshot {
 fn a_twenty_first_signer_is_an_invalid_transition() {
     let report = run(
         vec![full_account()],
-        held(&[1]),
+        held(&[1, 200]),
         vec![tx(1, vec![signer_op(None, 200, 1)])],
     );
     assert_eq!(classes(&report), [InvalidTransition]);
@@ -605,7 +605,7 @@ fn at_the_limit_replacement_works_when_the_removal_comes_first() {
     // In one transaction (remove, then add) and across two transactions.
     let one_tx = run(
         vec![full_account()],
-        held(&[1]),
+        held(&[1, 200]),
         vec![tx(
             1,
             vec![signer_op(None, 100, 0), signer_op(None, 200, 1)],
@@ -615,7 +615,7 @@ fn at_the_limit_replacement_works_when_the_removal_comes_first() {
 
     let two_tx = run(
         vec![full_account()],
-        held(&[1]),
+        held(&[1, 200]),
         vec![
             tx(1, vec![signer_op(None, 100, 0)]),
             tx(1, vec![signer_op(None, 200, 1)]),
@@ -626,7 +626,7 @@ fn at_the_limit_replacement_works_when_the_removal_comes_first() {
     // Reversed within one transaction, the add executes at 20 signers.
     let reversed = run(
         vec![full_account()],
-        held(&[1]),
+        held(&[1, 200]),
         vec![tx(
             1,
             vec![signer_op(None, 200, 1), signer_op(None, 100, 0)],
@@ -851,6 +851,131 @@ fn contradictory_availability_for_an_existing_signer_is_inconclusive() {
             TransitionError::ConflictingAvailability { .. }
         )]
     ));
+}
+
+#[test]
+fn contradictory_global_and_operation_availability_is_inconclusive() {
+    let ops = vec![signer_op(None, 100, 1)];
+    let declared_available = tx_with(
+        1,
+        ops.clone(),
+        declarations(&ops, HELD),
+        ReserveDeclaration::Unverified,
+        Vec::new(),
+    );
+    let missing_from_global = run(
+        vec![snap(1, 1, (1, 1, 1), &[])],
+        held(&[1]),
+        vec![declared_available],
+    );
+    assert_eq!(classes(&missing_from_global), [Inconclusive]);
+    assert!(matches!(
+        missing_from_global.steps()[0].reasons(),
+        [StepReason::TransitionUnresolved(
+            TransitionError::GlobalAvailabilityMismatch {
+                account,
+                operation_index: 0,
+                key: signer_key,
+                declared: SignerAvailability::Available,
+                global_available: false,
+            }
+        )] if *account == acct(1) && *signer_key == key(100)
+    ));
+
+    let declared_unavailable = tx_with(
+        1,
+        ops.clone(),
+        declarations(&ops, NOT_HELD),
+        ReserveDeclaration::Unverified,
+        Vec::new(),
+    );
+    let present_in_global = run(
+        vec![snap(1, 1, (1, 1, 1), &[])],
+        held(&[1, 100]),
+        vec![declared_unavailable],
+    );
+    assert_eq!(classes(&present_in_global), [Inconclusive]);
+    assert!(matches!(
+        present_in_global.steps()[0].reasons(),
+        [StepReason::TransitionUnresolved(
+            TransitionError::GlobalAvailabilityMismatch {
+                account,
+                operation_index: 0,
+                key: signer_key,
+                declared: SignerAvailability::Unavailable,
+                global_available: true,
+            }
+        )] if *account == acct(1) && *signer_key == key(100)
+    ));
+}
+
+#[test]
+fn a_newly_added_available_signer_can_authorize_later_reweighting() {
+    let add_ops = vec![signer_op(None, 100, 1)];
+    let reweight_ops = vec![signer_op(None, 100, 2)];
+    let report = run(
+        vec![snap(1, 1, (1, 1, 1), &[])],
+        held(&[1, 100]),
+        vec![
+            tx_with(
+                1,
+                add_ops.clone(),
+                declarations(&add_ops, HELD),
+                ReserveDeclaration::Unverified,
+                Vec::new(),
+            ),
+            tx_with(
+                1,
+                reweight_ops.clone(),
+                declarations(&reweight_ops, HELD),
+                ReserveDeclaration::Unverified,
+                Vec::new(),
+            ),
+            tx(1, vec![master_op(None, 0)]),
+        ],
+    );
+
+    assert_eq!(
+        classes(&report),
+        [SupportedReachable, SupportedReachable, SupportedReachable]
+    );
+    let account = report.final_state().get(&acct(1)).unwrap();
+    assert_eq!(account.master_key_weight().value(), 0);
+    assert_eq!(account.signer(&key(100)).unwrap().weight().value(), 2);
+    assert_eq!(
+        account.signer(&key(100)).unwrap().availability(),
+        SignerAvailability::Available
+    );
+}
+
+#[test]
+fn a_newly_added_unavailable_signer_cannot_authorize_a_later_step() {
+    let ops = vec![signer_op(None, 100, 1)];
+    let report = run(
+        vec![snap(1, 1, (1, 1, 1), &[])],
+        held(&[1]),
+        vec![
+            tx_with(
+                1,
+                ops.clone(),
+                declarations(&ops, NOT_HELD),
+                ReserveDeclaration::Unverified,
+                Vec::new(),
+            ),
+            tx(1, vec![master_op(None, 0)]),
+            tx(1, vec![Operation::payment(None)]),
+        ],
+    );
+
+    assert_eq!(classes(&report), [SupportedReachable, LockoutRisk, Blocked]);
+    let StepReason::AuthorizationNotMet { status, .. } = &report.steps()[2].reasons()[0] else {
+        panic!("expected a blocked authorization requirement");
+    };
+    assert_eq!(*status, ReachStatus::RequiresUnavailableSigners);
+    assert_eq!(
+        report.steps()[2].authorization().unwrap().findings()[0].available_weight(),
+        0
+    );
 }
 
 #[test]

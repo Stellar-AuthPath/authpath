@@ -15,7 +15,10 @@ use super::{
     classification::{ResultBasis, RotationLimitation, SafetyClassification, StepReason, classify},
     plan::{PlannedTransaction, RotationPlan},
     reachability::{AccountReach, account_reach},
-    transition::{ModeledState, TransitionError, apply_transaction, compare_expected},
+    transition::{
+        ModeledState, TransitionError, apply_transaction, compare_expected,
+        validate_transaction_availability,
+    },
 };
 use crate::{AuthorizationReport, analyze};
 
@@ -233,6 +236,14 @@ fn evaluate_step(
         return halted(index, reasons, Some(report));
     }
 
+    if let Err(error) = validate_transaction_availability(transaction, plan.available()) {
+        return halted(
+            index,
+            vec![StepReason::TransitionUnresolved(error)],
+            Some(report),
+        );
+    }
+
     let next = match apply_transaction(state, transaction) {
         Ok(next) => next,
         Err(error) => {
@@ -243,6 +254,7 @@ fn evaluate_step(
                 }
                 TransitionError::MissingAccountSnapshot { .. }
                 | TransitionError::ConflictingAvailability { .. }
+                | TransitionError::GlobalAvailabilityMismatch { .. }
                 | TransitionError::InvalidResult(_) => StepReason::TransitionUnresolved(error),
             };
             return halted(index, vec![reason], Some(report));

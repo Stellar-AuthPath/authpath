@@ -1,9 +1,12 @@
-//! Whether declared-available signers can still authorize, per threshold.
+//! Whether explicitly declared-available signers can still authorize, per
+//! threshold.
 //!
 //! Reachability compares weight against thresholds; it never counts signers.
 //! A low signer count is not a lockout when the available weight still meets
 //! the thresholds, and a high signer count is not safe when the available
-//! weight does not.
+//! weight does not. A configured signer contributes only when both the
+//! account-state availability declaration and the plan-wide identity set say
+//! it is available.
 
 use authpath_model::{AccountId, AccountSnapshot};
 

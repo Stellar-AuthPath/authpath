@@ -16,11 +16,11 @@ use std::{
 
 use authpath_model::{
     AccountId, AccountSnapshot, ConfiguredSigner, Ed25519PublicKey, MAX_SIGNERS, ModelError,
-    SnapshotProvenance,
+    SignerAvailability, SnapshotProvenance,
 };
 
 use super::plan::{ExpectedAccount, PlannedTransaction, ReserveDeclaration};
-use crate::{AccountSnapshots, Operation};
+use crate::{AccountSnapshots, AvailableSigners, Operation};
 
 /// Where an account's configuration in a [`ModeledState`] came from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,8 +104,8 @@ pub enum TransitionError {
         /// The zero-based operation index.
         operation_index: usize,
     },
-    /// A declaration contradicts the availability already recorded for an
-    /// existing signer.
+    /// A reweight declaration contradicts the availability already recorded
+    /// for an existing signer.
     ConflictingAvailability {
         /// The account holding the signer.
         account: AccountId,
@@ -113,6 +113,20 @@ pub enum TransitionError {
         operation_index: usize,
         /// The signer key.
         key: Ed25519PublicKey,
+    },
+    /// A positive-weight signer declaration contradicts the plan-wide set of
+    /// identities explicitly declared available by the caller.
+    GlobalAvailabilityMismatch {
+        /// The account being changed.
+        account: AccountId,
+        /// The zero-based SetOptions operation index.
+        operation_index: usize,
+        /// The signer key.
+        key: Ed25519PublicKey,
+        /// The operation's post-transition availability declaration.
+        declared: SignerAvailability,
+        /// Whether the key is in the plan-wide available identity set.
+        global_available: bool,
     },
     /// The resulting configuration failed model validation.
     InvalidResult(ModelError),
@@ -150,6 +164,27 @@ impl fmt::Display for TransitionError {
                 formatter,
                 "operation {operation_index}: availability declared for {key} contradicts the existing signer on {account}"
             ),
+            Self::GlobalAvailabilityMismatch {
+                account,
+                operation_index,
+                key,
+                declared,
+                global_available,
+            } => {
+                let declared = match declared {
+                    SignerAvailability::Available => "available",
+                    SignerAvailability::Unavailable => "unavailable",
+                };
+                let global = if *global_available {
+                    "available"
+                } else {
+                    "not declared available"
+                };
+                write!(
+                    formatter,
+                    "operation {operation_index}: signer {key} on {account} is declared {declared}, but the plan-wide identity set says {global}"
+                )
+            }
             Self::InvalidResult(error) => write!(formatter, "invalid modeled result: {error}"),
         }
     }
@@ -257,6 +292,47 @@ pub fn apply_transaction(
     }
 
     Ok(next)
+}
+
+/// Checks the contract between a transaction's signer-change declarations and
+/// the plan-wide available Ed25519 identity set.
+///
+/// The plan-wide set is the caller's explicit declaration of identities that
+/// may be used throughout the plan. A positive-weight signer change declared
+/// `Available` must be in that set, and a change declared `Unavailable` must
+/// not be in it. The function never infers possession from a configured
+/// weight, a public key, or a signer declaration alone.
+pub fn validate_transaction_availability(
+    transaction: &PlannedTransaction,
+    available: &AvailableSigners,
+) -> Result<(), TransitionError> {
+    let transaction_source = transaction.description().source_account();
+    for (operation_index, operation) in transaction.description().operations().iter().enumerate() {
+        let Operation::SetOptions { source, changes } = operation else {
+            continue;
+        };
+        let Some(signer) = changes.signer.filter(|signer| signer.weight().value() > 0) else {
+            continue;
+        };
+        let declared = transaction
+            .declared_availability(operation_index)
+            .expect("plan validation requires a declaration for every signer addition");
+        let global_available = available.contains(&signer.key());
+        let declaration_matches_global = match declared {
+            SignerAvailability::Available => global_available,
+            SignerAvailability::Unavailable => !global_available,
+        };
+        if !declaration_matches_global {
+            return Err(TransitionError::GlobalAvailabilityMismatch {
+                account: source.unwrap_or(transaction_source),
+                operation_index,
+                key: signer.key(),
+                declared,
+                global_available,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// A disagreement between a caller's expected configuration and the model.

@@ -22,7 +22,10 @@ signer weights, the master-key weight and thresholds on classic accounts. For
 each step it checks authorization against the configuration that exists
 before the step, applies the step's authorization-relevant changes
 *conditionally*, and reports whether the changed accounts remain
-administrable by the signers the caller declared available. Results are
+administrable by the intersection of the plan-wide identities and the
+account-state signer-availability declarations. Positive-weight signer
+additions and reweightings must declare availability consistently with that
+plan-wide set; contradictions halt the sequence as `INCONCLUSIVE`. Results
 classified `SUPPORTED_REACHABLE`, `INCONCLUSIVE`, `LOCKOUT_RISK`,
 `INVALID_TRANSITION` or `BLOCKED`. Every result is a conditional model, never
 a verified on-chain outcome, and no result means an account is safe.

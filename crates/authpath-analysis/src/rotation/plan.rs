@@ -19,11 +19,14 @@ pub const MAX_OPERATIONS_PER_TRANSACTION: usize = 100;
 /// An AuthPath resource bound on plan length. This is not a protocol limit.
 pub const MAX_PLAN_TRANSACTIONS: usize = 256;
 
-/// An explicit availability declaration for a signer added or re-weighted by
-/// a SetOptions operation.
+/// An explicit post-operation availability declaration for a signer added or
+/// re-weighted by a SetOptions operation.
 ///
-/// Availability is never inferred: every positive-weight signer change in a
-/// plan needs exactly one declaration. Removals (weight zero) take none.
+/// The declaration must agree with the [`RotationPlan`] wide set of identities
+/// explicitly declared available: `Available` requires membership and
+/// `Unavailable` requires absence. Availability is never inferred from a
+/// configured weight or public key. Every positive-weight signer change in a
+/// plan needs exactly one declaration; removals (weight zero) take none.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignerDeclaration {
     operation_index: usize,
@@ -498,9 +501,14 @@ impl std::error::Error for PlanError {}
 /// An ordered sequence of proposed transactions over initial account
 /// snapshots, with explicit signer availability.
 ///
-/// Unsupported signer kinds in the availability declarations are retained
-/// rather than coerced or dropped, so the analysis can report that it cannot
-/// evaluate them.
+/// The plan-wide Ed25519 set is the caller's explicit identity-availability
+/// declaration for the whole sequence. A configured signer contributes to
+/// reachability only when its account-state availability is also
+/// `Available`; a positive-weight per-operation declaration must agree with
+/// the plan-wide set. Unsupported signer kinds in the declarations are
+/// retained rather than coerced or dropped, so the analysis can report that it
+/// cannot evaluate them. None of these declarations proves private-key
+/// possession.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RotationPlan {
     initial: AccountSnapshots,

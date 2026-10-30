@@ -25,5 +25,5 @@ pub use plan::{
 pub use reachability::{AccountReach, LevelReach, LockoutKind, ReachStatus, account_reach};
 pub use transition::{
     ExpectationMismatch, ModeledState, StateOrigin, TransitionError, apply_transaction,
-    compare_expected,
+    compare_expected, validate_transaction_availability,
 };
