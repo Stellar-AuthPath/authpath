@@ -90,14 +90,22 @@ metadata and is not treated as an on-chain configuration field.
 The observed document's provenance is retained in the result. A
 `caller_provided` file is not upgraded to ledger evidence, even when every
 compared field matches. A matching JSON file never becomes cryptographic or
-on-chain verification.
+on-chain verification. The JSON result separates `configuration_result` from
+`plan_classification` and includes `completion_status`. An exact
+`OFFLINE_CONFIGURATION_MATCH` is returned only when the report is
+`SUPPORTED_REACHABLE`, every step is applied and supported, all compared
+configuration fields match, and network identity is available and equal.
+Matching fields do not turn a blocked, lockout-risk, invalid, incomplete, or
+inconclusive plan into a successful rotation: those classifications remain in
+`result` and keep their documented non-zero exit code.
 
 ## Global output options
 
 - `--format human` (default) writes readable terminal explanations.
 - `--format json` writes deterministic pretty-printed JSON with a final
   newline.
-- `--output PATH` installs output atomically beside the requested path.
+- `--output PATH` installs output atomically beside the requested path using a
+  no-replace installation when `--force` is absent.
 - Existing output files are rejected. `--force` is required to replace one.
   A failed output operation does not install a partial report.
 
@@ -185,14 +193,18 @@ observed provenance, `basis: "offline_configuration_comparison"`, and
 
 | Code | Meaning |
 | ---: | --- |
-| `0` | Successful inspection, supported analysis, explanation, or exact offline configuration match. |
+| `0` | Successful inspection, supported analysis, explanation, or exact offline configuration match for a complete supported plan. |
 | `2` | Invalid input: malformed JSON, unsupported schema, invalid identity, duplicate/contradictory declarations, or an untrusted report that fails validation. |
 | `3` | Operational failure: missing/unreadable input, stdout failure, or output installation failure. |
 | `10` | A finding requiring attention: `BLOCKED`, `LOCKOUT_RISK`, `INVALID_TRANSITION`, or offline configuration mismatch. |
 | `20` | `INCONCLUSIVE`, including unsupported semantics, unavailable network identity, expectation mismatch, or a dependent step after a halted predecessor. |
 
 An `INCONCLUSIVE` engine result always maps to exit code `20`; it is never
-printed as `SUPPORTED_REACHABLE`.
+printed as `SUPPORTED_REACHABLE`. A comparison can report
+`configuration_result: "MATCHED"` while returning `BLOCKED`, `LOCKOUT_RISK`,
+`INVALID_TRANSITION`, or `INCONCLUSIVE` in `result`; this means only that the
+observed fields match the modeled candidate, not that the intended rotation
+completed.
 
 ## Resource bounds and limitations
 

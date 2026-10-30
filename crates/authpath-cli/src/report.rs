@@ -189,6 +189,9 @@ pub(crate) struct ComparisonJson {
     pub(crate) schema: &'static str,
     pub(crate) basis: &'static str,
     pub(crate) result: &'static str,
+    pub(crate) configuration_result: &'static str,
+    pub(crate) plan_classification: String,
+    pub(crate) completion_status: &'static str,
     pub(crate) verified_on_chain: bool,
     pub(crate) observed_account_id: String,
     pub(crate) modeled_account_id: Option<String>,
@@ -1080,18 +1083,31 @@ pub(crate) fn compare_configuration(
         }
     };
 
-    let result = if !mismatches.is_empty() {
-        "OFFLINE_CONFIGURATION_MISMATCH"
+    let configuration_result = if !mismatches.is_empty() {
+        "MISMATCH"
     } else if network.status != "matched" {
         "INCONCLUSIVE"
     } else {
-        "OFFLINE_CONFIGURATION_MATCH"
+        "MATCHED"
     };
+    let plan_classification = parse_report_classification(&report.classification)?;
+    let completion_status = if plan_classification == SafetyClassification::SupportedReachable
+        && report.steps.iter().all(|step| {
+            step.applied && step.classification == SafetyClassification::SupportedReachable.as_str()
+        }) {
+        "complete"
+    } else {
+        "not_complete"
+    };
+    let result = comparison_result(plan_classification, configuration_result);
 
     Ok(ComparisonJson {
         schema: COMPARISON_SCHEMA,
         basis: "offline_configuration_comparison",
         result,
+        configuration_result,
+        plan_classification: plan_classification.as_str().to_owned(),
+        completion_status,
         verified_on_chain: false,
         observed_account_id,
         modeled_account_id,
@@ -1113,6 +1129,23 @@ pub(crate) fn compare_configuration(
                 .to_owned(),
         ],
     })
+}
+
+fn comparison_result(
+    plan_classification: SafetyClassification,
+    configuration_result: &str,
+) -> &'static str {
+    match plan_classification {
+        SafetyClassification::SupportedReachable => match configuration_result {
+            "MATCHED" => "OFFLINE_CONFIGURATION_MATCH",
+            "MISMATCH" => "OFFLINE_CONFIGURATION_MISMATCH",
+            _ => "INCONCLUSIVE",
+        },
+        SafetyClassification::Inconclusive => "INCONCLUSIVE",
+        SafetyClassification::LockoutRisk => "LOCKOUT_RISK",
+        SafetyClassification::InvalidTransition => "INVALID_TRANSITION",
+        SafetyClassification::Blocked => "BLOCKED",
+    }
 }
 
 fn compare_network(modeled: &AccountSnapshot, observed: &AccountSnapshot) -> NetworkComparisonJson {
@@ -1185,6 +1218,18 @@ pub(crate) fn render_human_comparison(comparison: &ComparisonJson) -> String {
     )
     .expect("writing to a String cannot fail");
     writeln!(text, "result: {}", comparison.result).expect("writing to a String cannot fail");
+    writeln!(
+        text,
+        "configuration fields: {}",
+        comparison.configuration_result
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        text,
+        "plan classification: {} (completion={})",
+        comparison.plan_classification, comparison.completion_status
+    )
+    .expect("writing to a String cannot fail");
     writeln!(
         text,
         "account identity: {} (observed {})",

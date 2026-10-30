@@ -80,16 +80,19 @@ fn snapshot_custom(
 }
 
 fn observed(account_id: &str, master: u32, network: Option<&str>) -> String {
-    let network = network.map_or_else(|| "null".to_owned(), |value| format!("{value:?}"));
-    format!(
-        r#"{{
-  "schema": "authpath.observed_configuration.v1",
-  "account_id": "{account_id}",
-  "master_key_weight": {master},
-  "thresholds": {{"low": 1, "medium": 1, "high": 1}},
-  "signers": [],
-  "provenance": {{"kind": "caller_provided", "network": {network}, "ledger_sequence": null}}
-}}"#
+    observed_custom(account_id, master, (1, 1, 1), &[], network)
+}
+
+fn observed_custom(
+    account_id: &str,
+    master: u32,
+    thresholds: (u32, u32, u32),
+    signers: &[(&str, u32, &str)],
+    network: Option<&str>,
+) -> String {
+    snapshot_custom(account_id, master, thresholds, signers, network).replace(
+        "authpath.account_snapshot.v1",
+        "authpath.observed_configuration.v1",
     )
 }
 
@@ -162,12 +165,22 @@ fn set_master_operation(weight: u32) -> String {
 }
 
 fn transaction(account_id: &str, operations: &str, declarations: &str, expected: &str) -> String {
+    transaction_with_reserve(account_id, operations, declarations, "unverified", expected)
+}
+
+fn transaction_with_reserve(
+    account_id: &str,
+    operations: &str,
+    declarations: &str,
+    reserve: &str,
+    expected: &str,
+) -> String {
     format!(
         r#"{{
   "source_account": "{account_id}",
   "operations": [{operations}],
   "signer_availability": [{declarations}],
-  "reserve": "unverified",
+  "reserve": "{reserve}",
   "expected": [{expected}]
 }}"#
     )
@@ -207,8 +220,24 @@ fn error_text(output: &Output) -> String {
 }
 
 fn write_report(directory: &TestDirectory, account_id: &str) -> PathBuf {
-    let plan = directory.write("plan.json", &no_change_plan(account_id));
-    let report = directory.file("report.json");
+    let (report, output) = write_report_for_plan(
+        directory,
+        "plan.json",
+        "report.json",
+        &no_change_plan(account_id),
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", error_text(&output));
+    report
+}
+
+fn write_report_for_plan(
+    directory: &TestDirectory,
+    plan_name: &str,
+    report_name: &str,
+    plan_json: &str,
+) -> (PathBuf, Output) {
+    let plan = directory.write(plan_name, plan_json);
+    let report = directory.file(report_name);
     let plan = plan.to_string_lossy().into_owned();
     let report_string = report.to_string_lossy().into_owned();
     let output = run(&[
@@ -219,9 +248,8 @@ fn write_report(directory: &TestDirectory, account_id: &str) -> PathBuf {
         "analyze",
         &plan,
     ]);
-    assert_eq!(output.status.code(), Some(0), "{}", error_text(&output));
-    assert!(report.is_file());
-    report
+    assert!(report.is_file(), "{}", error_text(&output));
+    (report, output)
 }
 
 #[test]
@@ -248,6 +276,9 @@ fn verify_matches_exact_configuration_without_upgrading_provenance() {
     assert_eq!(output.status.code(), Some(0), "{}", error_text(&output));
     let json: serde_json::Value = serde_json::from_str(&output_text(&output)).unwrap();
     assert_eq!(json["result"], "OFFLINE_CONFIGURATION_MATCH");
+    assert_eq!(json["configuration_result"], "MATCHED");
+    assert_eq!(json["plan_classification"], "SUPPORTED_REACHABLE");
+    assert_eq!(json["completion_status"], "complete");
     assert_eq!(json["verified_on_chain"], false);
     assert_eq!(json["observed_provenance"]["kind"], "caller_provided");
     assert!(!output_text(&output).contains("VERIFIED_ON_CHAIN"));
@@ -535,6 +566,244 @@ fn expected_mismatch_halts_dependent_transactions_as_inconclusive() {
 }
 
 #[test]
+fn verify_preserves_inconclusive_plan_when_matching_halted_configuration() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let mismatch = transaction(
+        &account_id,
+        &set_master_operation(0),
+        "",
+        &expected_account(&account_id, 1, (1, 1, 1), &[]),
+    );
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let plan_json = plan(
+        &initial,
+        &available_ed25519(&[&account_id]),
+        &[mismatch, dependent],
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "inconclusive-plan.json",
+        "inconclusive-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(20));
+
+    let observed = directory.write(
+        "inconclusive-observed.json",
+        &observed(&account_id, 1, Some("Test Network")),
+    );
+    let report = report.to_string_lossy().into_owned();
+    let observed = observed.to_string_lossy().into_owned();
+    let output = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report,
+        "--observed",
+        &observed,
+    ]);
+
+    assert_eq!(output.status.code(), Some(20));
+    let json: serde_json::Value = serde_json::from_str(&output_text(&output)).unwrap();
+    assert_eq!(json["result"], "INCONCLUSIVE");
+    assert_eq!(json["configuration_result"], "MATCHED");
+    assert_eq!(json["plan_classification"], "INCONCLUSIVE");
+    assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
+fn verify_preserves_blocked_plan_when_matching_configuration_is_not_completion() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let blocked = transaction(&account_id, payment_operation(), "", "");
+    let plan_json = plan(&initial, "", &[blocked]);
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "blocked-plan.json",
+        "blocked-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let observed = directory.write(
+        "blocked-observed.json",
+        &observed(&account_id, 1, Some("Test Network")),
+    );
+    let report = report.to_string_lossy().into_owned();
+    let observed = observed.to_string_lossy().into_owned();
+    let output = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report,
+        "--observed",
+        &observed,
+    ]);
+
+    assert_eq!(output.status.code(), Some(10));
+    let json: serde_json::Value = serde_json::from_str(&output_text(&output)).unwrap();
+    assert_eq!(json["result"], "BLOCKED");
+    assert_eq!(json["configuration_result"], "MATCHED");
+    assert_eq!(json["plan_classification"], "BLOCKED");
+    assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
+fn verify_preserves_lockout_risk_when_matching_modeled_configuration() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let lockout = transaction(
+        &account_id,
+        &set_master_operation(0),
+        "",
+        &expected_account(&account_id, 0, (1, 1, 1), &[]),
+    );
+    let plan_json = plan(&initial, &available_ed25519(&[&account_id]), &[lockout]);
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "lockout-plan.json",
+        "lockout-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let observed = directory.write(
+        "lockout-observed.json",
+        &observed(&account_id, 0, Some("Test Network")),
+    );
+    let report = report.to_string_lossy().into_owned();
+    let observed = observed.to_string_lossy().into_owned();
+    let output = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report,
+        "--observed",
+        &observed,
+    ]);
+
+    assert_eq!(output.status.code(), Some(10));
+    let json: serde_json::Value = serde_json::from_str(&output_text(&output)).unwrap();
+    assert_eq!(json["result"], "LOCKOUT_RISK");
+    assert_eq!(json["configuration_result"], "MATCHED");
+    assert_eq!(json["plan_classification"], "LOCKOUT_RISK");
+    assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
+fn verify_preserves_invalid_transition_when_configuration_matches_unapplied_plan() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let added = account(2);
+    let initial = snapshot(&account_id, 1, Some("Test Network"));
+    let invalid = transaction_with_reserve(
+        &account_id,
+        &set_signer_operation(&added, 1),
+        &signer_declaration(0, &added, "available"),
+        "declared_insufficient",
+        "",
+    );
+    let plan_json = plan(
+        &initial,
+        &available_ed25519(&[&account_id, &added]),
+        &[invalid],
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "invalid-transition-plan.json",
+        "invalid-transition-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let observed = directory.write(
+        "invalid-transition-observed.json",
+        &observed(&account_id, 1, Some("Test Network")),
+    );
+    let report = report.to_string_lossy().into_owned();
+    let observed = observed.to_string_lossy().into_owned();
+    let output = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report,
+        "--observed",
+        &observed,
+    ]);
+
+    assert_eq!(output.status.code(), Some(10));
+    let json: serde_json::Value = serde_json::from_str(&output_text(&output)).unwrap();
+    assert_eq!(json["result"], "INVALID_TRANSITION");
+    assert_eq!(json["configuration_result"], "MATCHED");
+    assert_eq!(json["plan_classification"], "INVALID_TRANSITION");
+    assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
+fn verify_does_not_treat_partial_halted_rotation_as_successful_completion() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let added = account(2);
+    let initial = snapshot_custom(&account_id, 1, (1, 2, 1), &[], Some("Test Network"));
+    let add = transaction(
+        &account_id,
+        &set_signer_operation(&added, 1),
+        &signer_declaration(0, &added, "unavailable"),
+        &expected_account(&account_id, 1, (1, 2, 1), &[(&added, 1)]),
+    );
+    let dependent = transaction(&account_id, payment_operation(), "", "");
+    let plan_json = plan(
+        &initial,
+        &available_ed25519(&[&account_id]),
+        &[add, dependent],
+    );
+    let (report, analysis) = write_report_for_plan(
+        &directory,
+        "partial-plan.json",
+        "partial-report.json",
+        &plan_json,
+    );
+    assert_eq!(analysis.status.code(), Some(10));
+
+    let observed = directory.write(
+        "partial-observed.json",
+        &observed_custom(
+            &account_id,
+            1,
+            (1, 2, 1),
+            &[(&added, 1, "unavailable")],
+            Some("Test Network"),
+        ),
+    );
+    let report = report.to_string_lossy().into_owned();
+    let observed = observed.to_string_lossy().into_owned();
+    let output = run(&[
+        "--format",
+        "json",
+        "verify",
+        "--report",
+        &report,
+        "--observed",
+        &observed,
+    ]);
+
+    assert_eq!(output.status.code(), Some(10));
+    let json: serde_json::Value = serde_json::from_str(&output_text(&output)).unwrap();
+    assert_eq!(json["result"], "BLOCKED");
+    assert_eq!(json["configuration_result"], "MATCHED");
+    assert_eq!(json["plan_classification"], "BLOCKED");
+    assert_eq!(json["completion_status"], "not_complete");
+}
+
+#[test]
 fn contradictory_global_and_operation_availability_is_inconclusive() {
     let directory = TestDirectory::new();
     let account_id = account(1);
@@ -690,6 +959,24 @@ fn explain_rejects_structurally_inconsistent_reports() {
     let output = run(&["explain", &malformed]);
     assert_eq!(output.status.code(), Some(2));
     assert!(error_text(&output).contains("at least one step"));
+}
+
+#[test]
+fn explain_rejects_contradictory_step_completion_metadata() {
+    let directory = TestDirectory::new();
+    let account_id = account(1);
+    let report = write_report(&directory, &account_id);
+    let mut report_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    report_json["steps"][0]["applied"] = serde_json::Value::Bool(false);
+    let malformed = directory.write(
+        "contradictory-completion-report.json",
+        &serde_json::to_string(&report_json).unwrap(),
+    );
+    let malformed = malformed.to_string_lossy().into_owned();
+    let output = run(&["explain", &malformed]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(error_text(&output).contains("invalid applied flag"));
 }
 
 #[test]

@@ -154,6 +154,7 @@ fn comparison_exit_code(result: &str) -> i32 {
     match result {
         "OFFLINE_CONFIGURATION_MATCH" => EXIT_SUCCESS,
         "INCONCLUSIVE" => error::EXIT_INCONCLUSIVE,
+        "BLOCKED" | "LOCKOUT_RISK" | "INVALID_TRANSITION" => error::EXIT_FINDING,
         "OFFLINE_CONFIGURATION_MISMATCH" => error::EXIT_FINDING,
         _ => error::EXIT_OPERATIONAL,
     }
