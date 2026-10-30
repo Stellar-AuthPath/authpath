@@ -5,7 +5,8 @@
 Phase C1 established the repository foundation and account configuration
 model. Phase C2 adds a conservative authorization-threshold analysis engine
 for classic Stellar transactions. Phase C3 adds a conditional rotation safety
-engine over sequences of such transactions.
+engine over sequences of such transactions. Phase C4 adds a local CLI and
+versioned JSON reporting boundary over those validated APIs.
 
 The checkout and the public `Stellar-AuthPath/authpath` repository were empty
 at initialization. No approved AuthPath architecture document or
@@ -55,12 +56,12 @@ authpath-analysis   C2 authorization sufficiency analysis
         |
 authpath-stellar    Stellar ledger/network adapters (deferred)
         |
-authpath-cli        user-facing commands (deferred)
+authpath-cli        offline user-facing commands and reports
 ```
 
-authpath-model and authpath-analysis are present because both have
-independently testable behavior. The remaining names are planned logical
-boundaries, not empty APIs.
+authpath-model, authpath-analysis, and authpath-cli have independently
+testable behavior. authpath-stellar remains a planned logical boundary, not
+an empty API.
 
 ## C1 model boundary
 
@@ -302,13 +303,35 @@ effect other than authorization configuration. A caller may declare a reserve
 shortfall, which is treated as given; the engine never derives one.
 Derived configurations are marked as modeled and are never ledger-backed.
 
+## C4 offline CLI boundary
+
+The `authpath` binary accepts four local commands: `inspect` validates and
+displays one account snapshot, `analyze` invokes the C3 rotation engine,
+`explain` validates and explains a generated analysis report, and `verify`
+performs an offline comparison with an independently supplied observed
+configuration. JSON contracts are versioned, strict about unknown fields, and
+bounded before deserialization. The CLI reuses the existing model
+constructors and analysis APIs; it does not reimplement authorization math.
+
+Human output and JSON output carry the same conditional semantics. Analysis
+reports identify their `conditional_model` basis and never claim on-chain
+verification. Comparison reports identify their
+`offline_configuration_comparison` basis and preserve the observed file's
+provenance. An exact comparison is not cryptographic verification and is not
+proof that a ledger executed a transaction.
+
+Output files are installed through a same-directory temporary file, sync, and
+rename. Existing destinations require explicit `--force`; input files are
+read-only from the CLI's perspective. The CLI has no key, wallet, network,
+database, hosted-service, or transaction-submission surface.
+
 ## Explicit non-goals
 
-C3 does not implement a CLI, ledger/network adapters, private-key storage,
+C4 does not implement ledger/network adapters, private-key storage,
 transaction signing or submission, wallet connections, or any hosted service.
 Pre-authorized transaction, hash-X and signed-payload signers, AccountMerge,
-fee-bump transactions, sponsorship and muxed accounts are not modeled. The
-full authorization engine remains incomplete.
+fee-bump transactions, sponsorship and muxed accounts remain outside the
+supported model. The full authorization engine remains incomplete.
 
 ## Verification
 
@@ -321,6 +344,6 @@ cargo audit --deny warnings
 ```
 
 At the 2026-10-30 review, cargo-audit 0.22.2 fetched its RustSec advisory
-database and found no vulnerabilities or warnings in the 23 locked
-dependencies. Its default yanked-crate check was available and passed; no
+database and found no vulnerabilities or warnings in the current locked
+dependency graph. Its default yanked-crate check was available and passed; no
 advisory or yanked-crate check was unavailable.
