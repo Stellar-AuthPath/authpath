@@ -309,3 +309,18 @@ transaction signing or submission, wallet connections, or any hosted service.
 Pre-authorized transaction, hash-X and signed-payload signers, AccountMerge,
 fee-bump transactions, sponsorship and muxed accounts are not modeled. The
 full authorization engine remains incomplete.
+
+## Verification
+
+The repository CI runs formatting, workspace compilation, Clippy with denied
+warnings, all workspace tests, and a workspace documentation build with
+rustdoc warnings denied. The dependency audit command is:
+
+```text
+cargo audit --deny warnings
+```
+
+At the 2026-10-30 review, cargo-audit 0.22.2 fetched its RustSec advisory
+database and found no vulnerabilities or warnings in the 23 locked
+dependencies. Its default yanked-crate check was available and passed; no
+advisory or yanked-crate check was unavailable.
