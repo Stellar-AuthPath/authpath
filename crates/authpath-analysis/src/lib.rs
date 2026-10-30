@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rotation;
+
 use std::{collections::BTreeMap, fmt};
 
 use authpath_model::{
@@ -339,6 +341,11 @@ impl AccountSnapshots {
         self.by_account.get(account)
     }
 
+    /// Iterates over the indexed snapshots in account order.
+    pub fn accounts(&self) -> impl Iterator<Item = &AccountSnapshot> {
+        self.by_account.values()
+    }
+
     /// Returns the number of indexed snapshots.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -370,6 +377,10 @@ pub enum DeclaredSigner {
 }
 
 /// A deduplicated set of caller-declared available Ed25519 identities.
+///
+/// Membership is an explicit availability assertion, not proof of private-key
+/// possession. Rotation reachability also requires the configured signer's
+/// account-state availability declaration to be `Available`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AvailableSigners {
     keys: std::collections::BTreeSet<Ed25519PublicKey>,
@@ -574,6 +585,11 @@ pub enum AuthorizationExplanation {
     RequirementMet,
     /// The available configured weight is short by this amount.
     MissingWeight { missing: u64 },
+    /// The threshold is met numerically, but no declared identity matches a
+    /// signer with positive weight. stellar-core only compares weight to the
+    /// threshold after a signature matches a listed signer, so even a
+    /// threshold of zero requires one matching signature.
+    NoMatchingSigner,
 }
 
 /// One transaction-source or operation-source authorization requirement.
@@ -788,13 +804,20 @@ fn evaluate_requirement(
 
     let required_weight = required_weight(snapshot, threshold);
     let available_weight = available_weight(snapshot, available_signers)?;
-    let meets_requirement = available_weight >= required_weight;
+    // stellar-core evaluates `totalWeight >= neededWeight` only after a
+    // signature matched a listed signer (SignatureChecker::checkSignature),
+    // and the master key is listed only when its weight is non-zero. A
+    // threshold of zero therefore still needs a matching positive-weight
+    // signer, which is exactly `available_weight > 0` here.
+    let meets_requirement = available_weight >= required_weight && available_weight > 0;
     let explanation = if meets_requirement {
         AuthorizationExplanation::RequirementMet
-    } else {
+    } else if available_weight < required_weight {
         AuthorizationExplanation::MissingWeight {
             missing: required_weight - available_weight,
         }
+    } else {
+        AuthorizationExplanation::NoMatchingSigner
     };
 
     Ok(AuthorizationFinding {
@@ -808,7 +831,7 @@ fn evaluate_requirement(
     })
 }
 
-fn required_weight(snapshot: &AccountSnapshot, threshold: ThresholdCategory) -> u64 {
+pub(crate) fn required_weight(snapshot: &AccountSnapshot, threshold: ThresholdCategory) -> u64 {
     let thresholds = snapshot.thresholds();
     match threshold {
         ThresholdCategory::Low => u64::from(thresholds.low().value()),
@@ -817,7 +840,7 @@ fn required_weight(snapshot: &AccountSnapshot, threshold: ThresholdCategory) -> 
     }
 }
 
-fn available_weight(
+pub(crate) fn available_weight(
     snapshot: &AccountSnapshot,
     available_signers: &AvailableSigners,
 ) -> Result<u64, AnalysisError> {
@@ -954,6 +977,37 @@ mod tests {
 
         assert_eq!(report.findings()[0].available_weight(), 0);
         assert!(!report.findings()[0].meets_requirement());
+    }
+
+    #[test]
+    fn zero_threshold_still_requires_a_matching_positive_weight_signer() {
+        // stellar-core checks weight only after a signature matches a listed
+        // signer, and omits a zero-weight master key from the signer list.
+        let transaction = payment_transaction(account(1));
+        let snapshots = accounts(vec![snapshot(1, 0, (0, 0, 0), vec![])]);
+        let available = AvailableSigners::new([signer(1)]);
+
+        let report = analyze(&transaction, &snapshots, &available).unwrap();
+
+        assert!(!report.meets_configured_requirements());
+        for finding in report.findings() {
+            assert_eq!(finding.required_weight(), 0);
+            assert_eq!(
+                finding.explanation(),
+                AuthorizationExplanation::NoMatchingSigner
+            );
+        }
+    }
+
+    #[test]
+    fn zero_threshold_is_met_by_any_positive_weight_signer() {
+        let transaction = payment_transaction(account(1));
+        let snapshots = accounts(vec![snapshot(1, 1, (0, 0, 0), vec![])]);
+        let available = AvailableSigners::new([signer(1)]);
+
+        let report = analyze(&transaction, &snapshots, &available).unwrap();
+
+        assert!(report.meets_configured_requirements());
     }
 
     #[test]

@@ -2,9 +2,12 @@
 
 Stellar AuthPath is incomplete and is not safe for real authorization
 decisions, real funds, private keys, or production deployment. Phase C2 adds
-configured-threshold analysis for a narrow operation set, but it does not
-verify signatures, prove private-key possession, fetch or verify ledger
-evidence, simulate execution, or sign transactions.
+configured-threshold analysis for a narrow operation set, and Phase C3 adds a
+conditional model of multi-transaction signer and threshold changes. Neither
+verifies signatures, proves private-key possession, fetches or verifies ledger
+evidence, models reserves, fees or sequence numbers, simulates execution, or
+signs transactions. A rotation result is a model under caller declarations,
+never a guarantee that a sequence is safe to submit.
 
 ## Reporting a vulnerability
 
@@ -24,7 +27,9 @@ public Stellar networks or submit transactions as part of a report.
 The current security boundary is the Rust model and analysis crates, their
 validation logic, and deterministic test fixtures. The analysis result means
 only that caller-declared Ed25519 identities reach configured threshold values
-in supplied snapshots; it is not cryptographic authorization proof. The
+in supplied snapshots; it is not cryptographic authorization proof. A rotation
+classification is a conditional statement about supplied snapshots and
+declared signer availability, not an on-chain result. The
 project has no deployed service, database, key custody, ledger integration, or
 transaction-submission surface. This policy will be revised before any later
 phase introduces those surfaces.
