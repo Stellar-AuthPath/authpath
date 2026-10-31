@@ -32,6 +32,7 @@ jobs:
         run: cargo install mdbook --version 0.4.52 --locked
 
       - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Build documentation
