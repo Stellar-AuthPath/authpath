@@ -1,14 +1,13 @@
 # Security policy
 
-Stellar AuthPath is incomplete and is not safe for real authorization
-decisions, real funds, private keys, or production deployment. Phase C2 adds
-configured-threshold analysis for a narrow operation set, Phase C3 adds a
-conditional model of multi-transaction signer and threshold changes, and C4
-adds an offline CLI over those APIs. None verifies signatures, proves
-private-key possession, fetches or verifies ledger evidence, models reserves,
-fees or sequence numbers, simulates execution, or signs transactions. A
-rotation result or offline comparison is a model under caller declarations,
-never a guarantee that a sequence is safe to submit.
+Stellar AuthPath is an offline analysis tool for a documented subset of
+classic Stellar account authorization and signer rotation. It is not safe to
+use as the sole basis for production financial decisions. It does not sign or
+submit transactions, prove private-key possession, establish authoritative
+ledger state, or guarantee that modeled transactions will execute. It does
+not model reserves, fees, sequence numbers, or transaction execution.
+Unsupported classic operations and Soroban authorization behavior remain
+outside its scope.
 
 ## Reporting a vulnerability
 
@@ -33,5 +32,5 @@ cryptographic authorization proof. A rotation classification is a
 conditional statement about supplied snapshots and declared signer
 availability, not an on-chain result. The project has no deployed service,
 database, key custody, network/ledger integration, or transaction-submission
-surface. This policy will be revised before any later phase introduces those
+surface. This policy must be revised if later changes introduce those
 surfaces.
