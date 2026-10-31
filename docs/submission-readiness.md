@@ -1,6 +1,6 @@
 # Final review and submission readiness
 
-Audit date: 2026-11-01
+Audit date: 2026-10-31
 
 This is an evidence record for independent review, not an approval, grant
 recommendation, adoption claim, or declaration that AuthPath is ready to
@@ -197,7 +197,7 @@ claim, partner claim, usage metric, or reviewer approval claim.
 | Technical correctness | PASS within the documented operation boundary | C1–C5 tests, protocol comparison, and C3 producer/consumer tests |
 | Local input/report security | PASS within the offline boundary | C5 adversarial and filesystem tests; no keys or network surface |
 | Reproducibility | PASS locally | Rust 1.87.0 and 1.99.1 locked-workspace verification |
-| Documentation accuracy | PASS after C8 | README, architecture, CLI, audit, examples, and evidence record updated |
+| Documentation accuracy | PASS after C6 and documentation PRs #7 and #8 | README, architecture, CLI, audit, examples, and evidence record updated |
 | Architecture completeness | PASS for the current MVP | Trust boundaries and unsupported behavior are explicit |
 | Stellar-specific value | PASS within a narrow scope | Uses threshold, signer, source-account, CAP-2, and rotation semantics |
 | Originality evidence | NEEDS WORK | Targeted research only; no exhaustive landscape or uniqueness claim |
