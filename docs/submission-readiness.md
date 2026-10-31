@@ -53,6 +53,16 @@ existing Stellar signer inspector; no uniqueness claim is made.
   [commit `1c059a1`](https://github.com/Stellar-AuthPath/authpath/commit/1c059a103d880d63b0fb016afbb5fc781dc61635),
   which adds `cargo audit --deny warnings` to PR CI. These commits are not in
   the audited baseline SHA.
+- [PR #12](https://github.com/Stellar-AuthPath/authpath/pull/12) remains open
+  and unmerged. Candidate CI
+  [run 41246542140, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41246542140)
+  passed on head `9c7089908d2717c5509ddd289115ecbb05dd80b3`; it ran formatting,
+  check, Clippy, all 166 tests, `cargo audit --deny warnings` with
+  cargo-audit 0.22.2 (30 locked crates), and Rustdoc with warnings denied.
+  The candidate mdBook build
+  [run 41246542440, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41246542440)
+  completed. Its Pages deployment job is skipped for pull requests, so the
+  live site remains the deployment from the audited `main` baseline.
 - These workflow results are GitHub-hosted checks on the stated `main` SHA;
   local commands below are separate evidence.
 - Public documentation: <https://stellar-authpath.github.io/authpath/>
@@ -318,7 +328,7 @@ program approval.
 | §2 Phase D: “components, interfaces, authority and data flow.” | Applies | `docs/architecture.md`, JSON schema docs, report validation and trust boundary | PASS | None for current scope |
 | §2 Phase E: “minimal complete working feature set.” | Applies | `inspect`, `analyze`, `explain`, `verify`; actual commands recorded above | PASS | None |
 | §2 Phase F: real cross-component boundary verified when 2+ components connect | Applies (workspace model, analysis and CLI crates) | Workspace tests and CLI integration suite exercise real constructors, engine and report handling | PASS | No external service boundary exists |
-| §2 Phase G / §9: reproducible success, negative and security/failure tests; suitable dependency scan | Applies | Baseline CI passes fmt/check/Clippy/166 tests/Rustdoc; `cargo audit` 0.22.2 passed locally; correction branch adds locked `cargo audit --deny warnings` to CI | PARTIAL on baseline; candidate check must pass | Portability beyond tested Linux runner is not established; candidate PR CI result is reported separately |
+| §2 Phase G / §9: reproducible success, negative and security/failure tests; suitable dependency scan | Applies | Baseline CI passes fmt/check/Clippy/166 tests/Rustdoc; candidate PR CI passed those checks plus `cargo audit --deny warnings` on 30 locked crates | PASS on candidate branch; baseline `main` remains unchanged until merge | Portability beyond tested Linux runner is not established |
 | §2 Phase H / §10: live proof only when claims depend on live systems | N/A for analyzer; applies to docs site | No ledger/network claims; public Pages pages and current deployment workflow checked | PASS / N/A | No live Stellar transaction is required or claimed |
 | §2 Phase I / §11: “A fresh user can obtain and execute the project in its intended environment.” | Applies | Source build/run commands, lockfile, CI clean runner, local fixture executions; no binary release | PASS for source installation | No release/tag required by current project or verified program rule |
 | §2 Phase J / §12: truthful docs, runnable sample, verified entry point and reproduce workflow | Applies | README links published docs; CLI reference and `examples/`; live links and examples checked | PASS | Presentation below is a concise reviewer handoff |
@@ -395,11 +405,10 @@ the remaining project-owned correction before this evidence can be promoted
 from conditional readiness. The other items are disclosed limitations or
 maintainer-controlled follow-up:
 
-1. This review branch's action-SHA pins and dependency-audit CI step require
-   PR checks and maintainer review before they become part of `main`. Until
-   merged, the audited `main` continues to use mutable action tags and does
-   not run `cargo audit` in CI. Baseline `main` CI and Pages evidence above is
-   distinct from candidate-branch evidence.
+1. PR #12's action-SHA pins and dependency-audit CI step passed the candidate
+   workflows but are not merged. Until merged, the audited `main` continues to
+   use mutable action tags and does not run `cargo audit` in CI. Baseline `main`
+   CI and Pages evidence above is distinct from candidate-branch evidence.
 2. Effective organization-level Actions restrictions remain NOT VERIFIED
    because the authenticated API request returned 403 without `admin:org`.
    Repository-level permissions are recorded above; no settings were changed.
@@ -422,10 +431,10 @@ the maintainer will handle any application activity.
 
 The audited `main` is demonstrable and reproducible within AuthPath's stated
 offline classic-account scope, and no submission-blocking Rust or CLI defect
-was reproduced. The candidate workflow-security corrections are not in
-`main` yet, so the baseline still lacks immutable action references and CI
-dependency auditing. Effective organization-level Actions restrictions also
-remain unverified. The maintainer's deliberate deferral of independent PR
-approvals is not a reason for this verdict. Reassess after the correction PR
-passes CI and the maintainer decides whether to merge it; no external review
-or application approval is claimed.
+was reproduced. PR #12's workflow-security corrections pass candidate CI but
+are not in `main`, which still uses mutable action tags and lacks CI dependency
+auditing. Effective organization-level Actions restrictions also remain
+unverified. The maintainer's deliberate deferral of independent PR approvals
+is not a reason for this verdict. Reassess after the maintainer decides whether
+to merge the passing correction PR; no external review or application
+approval is claimed.
