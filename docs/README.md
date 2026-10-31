@@ -12,21 +12,18 @@ service, or ledger integration.
   findings, adversarial coverage, reproducibility evidence, and limitations.
 - [Submission readiness](submission-readiness.md) — evidence, ecosystem
   positioning, governance status, readiness classifications, and blockers.
+- [Deterministic examples](examples.md) — offline CLI commands and expected
+  classifications using synthetic fixtures.
 
-The repository also contains [deterministic examples](../examples/README.md).
-They use synthetic valid strkeys and caller-provided provenance; they do not
-identify real accounts or prove ledger state.
+The examples use synthetic valid strkeys and caller-provided provenance; they
+do not identify real accounts or prove ledger state.
 
 ## Documentation site status
 
-The Markdown source can be built as a small mdBook and the repository includes
-a GitHub Pages workflow configuration. GitHub Pages is not currently enabled
-for this repository, so no public documentation URL is claimed here. A
-maintainer must set **Settings → Pages → Build and deployment → Source →
-GitHub Actions** before the deployment job can publish the generated book.
-After that setting is made, the maintainer should run the documentation
-workflow and verify the resulting URL before adding a public-site link or
-badge to the README.
+The Markdown source is built as a small mdBook and published through the
+repository's GitHub Pages workflow. The published documentation is available
+at [stellar-authpath.github.io/authpath/](https://stellar-authpath.github.io/authpath/).
+The source Markdown remains the repository's canonical documentation.
 
 All documentation preserves the same boundary: configured authorization
 sufficiency, conditional rotation modeling, and offline configuration
