@@ -20,8 +20,8 @@ cargo install --path crates/authpath-cli --locked
 authpath --help
 ```
 
-The deterministic examples in [`examples/`](../examples/) use synthetic
-valid strkeys and caller-provided provenance.
+The [deterministic examples](examples.md) use synthetic valid strkeys and
+caller-provided provenance.
 
 ## Commands
 
