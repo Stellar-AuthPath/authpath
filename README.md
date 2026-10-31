@@ -6,7 +6,7 @@
 
 **Stellar AuthPath is an offline Rust CLI for reviewing classic Stellar account authorization and signer/threshold rotation plans.**
 
-[Read the documentation](docs/README.md) · [CLI reference](docs/cli.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[Read the documentation](https://stellar-authpath.github.io/authpath/) · [CLI reference](docs/cli.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## The problem
 
