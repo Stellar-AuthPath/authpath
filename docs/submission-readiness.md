@@ -1,6 +1,6 @@
 # Final review and submission readiness
 
-Audit date: 2026-10-31
+Audit date: 2026-11-01
 
 This is an evidence record for independent review, not an approval, grant
 recommendation, adoption claim, or declaration that AuthPath is ready to
@@ -10,8 +10,10 @@ work.
 ## Canonical repository state
 
 - Repository: <https://github.com/Stellar-AuthPath/authpath>
-- C6 branch: `phase-c6-final-docs`
-- C6 review: <https://github.com/Stellar-AuthPath/authpath/pull/6>
+- Current main SHA before this correction: `4763682cee7fabe418930096057bfa962198c1d3`
+- C6 review: <https://github.com/Stellar-AuthPath/authpath/pull/6> (merged)
+- Documentation link correction: <https://github.com/Stellar-AuthPath/authpath/pull/7> (merged)
+- Published examples page correction: <https://github.com/Stellar-AuthPath/authpath/pull/8> (merged)
 - Base branch: `main`
 - Base SHA before C6: `aa43350d7286624fe45bad374566bbbb3db10d1d`
 - C5 review: <https://github.com/Stellar-AuthPath/authpath/pull/5> (merged)
@@ -126,10 +128,13 @@ formatting, check, Clippy, all 166 tests, and Rustdoc. The repository pins
 Rust 1.99.1 for development and CI. The dependency audit used cargo-audit
 0.22.2 and the local RustSec database; it was not a required CI job.
 
-C5's final CI run passed its configured `checks` job:
-<https://github.com/Stellar-AuthPath/authpath/actions/runs/41122469152>.
-The C6 PR's final CI result is recorded in the delivery report after the last
-push; local results and GitHub results are not interchangeable.
+The latest main commit is `4763682cee7fabe418930096057bfa962198c1d3`, the
+merge commit for PR #8. Its PR checks passed: [CI](https://github.com/Stellar-AuthPath/authpath/actions/runs/41163390775)
+and [Documentation](https://github.com/Stellar-AuthPath/authpath/actions/runs/41163390874).
+PR #7 also passed its CI run
+(https://github.com/Stellar-AuthPath/authpath/actions/runs/41162755782).
+These are GitHub results for those PR heads; they are distinct from local
+verification and do not imply a new CI run on every later main commit.
 
 ## C5 evidence
 
@@ -162,16 +167,21 @@ an originality or funding claim.
 
 ## Governance and repository readiness
 
-Verified repository facts:
+Repository facts verified locally or through accessible GitHub metadata:
 
 - `LICENSE` is Apache-2.0.
 - `SECURITY.md` and `CONTRIBUTING.md` are present and linked from the README.
 - The repository is public and `main` is the default branch.
-- Main branch protection enforces administrators and requires the `checks`
-  status context strictly, but currently requires **zero approving reviews**.
-- No GitHub Pages site is configured; the Pages API returned 404.
-- Secret scanning and Dependabot security updates are disabled in repository
-  settings.
+- GitHub Pages is configured to publish from the main branch using GitHub
+  Actions. The Pages API confirms the public URL
+  <https://stellar-authpath.github.io/authpath/>. The root and examples page
+  returned HTTP 200 after PR #8 merged.
+- Main branch protection, required CI contexts, approving-review requirements,
+  and administrator enforcement could not be verified: the branch-protection
+  API returned 404 to the available credentials.
+- Secret-scanning and private-vulnerability-reporting settings could not be
+  verified: repository security endpoints returned 404 or omitted those
+  fields for the available credentials. Dependabot settings were not changed.
 - No releases or tags were present at review time.
 - A targeted tracked-file scan found no private-key PEM blocks, obvious secret
   assignments, or AI co-author trailers. This is not a substitute for a
@@ -187,12 +197,12 @@ claim, partner claim, usage metric, or reviewer approval claim.
 | Technical correctness | PASS within the documented operation boundary | C1–C5 tests, protocol comparison, and C3 producer/consumer tests |
 | Local input/report security | PASS within the offline boundary | C5 adversarial and filesystem tests; no keys or network surface |
 | Reproducibility | PASS locally | Rust 1.87.0 and 1.99.1 locked-workspace verification |
-| Documentation accuracy | PASS for source Markdown after C6 | README, architecture, CLI, audit, and evidence record updated |
+| Documentation accuracy | PASS after C8 | README, architecture, CLI, audit, examples, and evidence record updated |
 | Architecture completeness | PASS for the current MVP | Trust boundaries and unsupported behavior are explicit |
 | Stellar-specific value | PASS within a narrow scope | Uses threshold, signer, source-account, CAP-2, and rotation semantics |
 | Originality evidence | NEEDS WORK | Targeted research only; no exhaustive landscape or uniqueness claim |
-| Governance | NEEDS WORK | Zero required approving reviews; secret scanning and Dependabot are disabled |
-| Public documentation site | BLOCKED | Maintainer must enable Pages with Source = GitHub Actions and verify its URL |
+| Governance | NOT VERIFIED | Branch protection, secret scanning, and private vulnerability reporting are inaccessible through the available GitHub API permissions |
+| Public documentation site | PASS | Pages API confirms workflow deployment; root and examples page returned HTTP 200 |
 | Independent review | NOT VERIFIED | This phase prepares evidence but does not substitute for external review |
 
 ## Remaining submission blockers
@@ -201,13 +211,12 @@ The project should not be described as ready for submission solely because the
 code checks are green. Before a final submission claim, maintainers should:
 
 1. obtain independent technical and protocol review;
-2. decide whether to require at least one approving review on `main` and
-   whether to enable repository secret scanning;
-3. enable GitHub Pages at **Settings → Pages → Build and deployment → Source →
-   GitHub Actions**, run the documentation workflow, and verify the public
-   destination before linking it as a live site;
-4. perform a broader, dated ecosystem/originality review; and
-5. decide whether audit and MSRV checks belong in required CI rather than only
+2. have a repository administrator verify main branch protection, required
+   approvals, administrator enforcement, secret scanning, and private
+   vulnerability reporting; consider requiring an approval and enabling
+   secret scanning if currently off;
+3. perform a broader, dated ecosystem/originality review; and
+4. decide whether audit and MSRV checks belong in required CI rather than only
    local evidence.
 
 ## Provisional verdict
