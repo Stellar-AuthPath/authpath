@@ -1,7 +1,9 @@
 # Contributing to Stellar AuthPath
 
-AuthPath is an incomplete, phased project. Contributions must stay within the
-current phase and must not imply that the authorization engine is complete.
+AuthPath is an offline analysis tool with a deliberately limited protocol
+scope. Contributions should preserve its validation and trust boundaries and
+must not imply that modeled outcomes establish ledger execution or safety for
+production financial decisions.
 
 ## Before making a change
 
@@ -41,5 +43,6 @@ co-author trailers. Do not merge an unreviewed contributor pull request.
 
 Pull requests should explain the behavior changed, the validation boundary,
 the tests run, and any unresolved specification question. Changes that would
-enable transaction signing, submission, key custody, deployment, or real
-authorization decisions require an approved later-phase specification.
+enable transaction signing, submission, key custody, authoritative ledger
+verification, or unsupported classic or Soroban behavior require a reviewed
+scope decision before implementation.
