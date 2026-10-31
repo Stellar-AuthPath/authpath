@@ -10,6 +10,8 @@ service, or ledger integration.
   output policy, exit codes, examples, and limitations.
 - [C5 independent audit](c5-audit.md) — protocol references, confirmed
   findings, adversarial coverage, reproducibility evidence, and limitations.
+- [Submission readiness](submission-readiness.md) — evidence, ecosystem
+  positioning, governance status, readiness classifications, and blockers.
 
 The repository also contains [deterministic examples](../examples/README.md).
 They use synthetic valid strkeys and caller-provided provenance; they do not

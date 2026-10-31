@@ -234,5 +234,5 @@ The pinned Rust 1.99.1 workspace and declared Rust 1.87.0 minimum have both
 passed the complete locked workspace checks. The repository CI workflow runs
 formatting, compilation, Clippy with warnings denied, tests, and Rustdoc. The
 dependency audit is run locally with `cargo audit --deny warnings`; its result
-is not currently a CI check. Governance and submission evidence will be
-recorded alongside the final documentation index.
+is not currently a CI check. Governance and submission evidence are recorded
+in [submission-readiness](submission-readiness.md).

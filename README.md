@@ -129,7 +129,8 @@ locally against the locked dependency graph.
 
 The [C5 audit record](docs/c5-audit.md) contains the protocol references,
 adversarial coverage, confirmed corrections, dependency result, and remaining
-limitations.
+limitations. The [submission-readiness record](docs/submission-readiness.md)
+separates verified evidence from open review items.
 
 ## Contributing and security
 
