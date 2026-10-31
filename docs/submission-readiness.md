@@ -1,228 +1,281 @@
-# Final review and submission readiness
+# Final independent audit and submission readiness
 
 Audit date: 2026-10-31
 
-This is an evidence record for independent review, not an approval, grant
-recommendation, adoption claim, or declaration that AuthPath is ready to
-submit. It separates implemented facts from unverified claims and remaining
-work.
+This is a dated evidence record, not an approval, grant recommendation,
+adoption claim, or assertion of on-chain verification. It distinguishes checks
+performed during this audit from earlier phase evidence and from items that
+remain unverified.
 
-## Canonical repository state
+## Executive summary
+
+AuthPath is a keyless, offline Rust CLI for analyzing classic Stellar account
+authorization and conditionally modeling ordered signer and threshold
+rotations. The current repository builds and passes its workspace checks on
+the pinned Rust 1.99.1 toolchain and on the declared Rust 1.87.0 minimum.
+Current `main` CI and documentation workflows pass, and the public mdBook site
+and its navigation pages were fetched successfully.
+
+This audit found no demonstrated submission-blocking correctness or security
+defect in the reviewed MVP boundary. That is not a full formal or independent
+protocol audit. Submission readiness remains conditional: main permits merges
+with zero approving reviews, repository secret scanning and private
+vulnerability reporting are disabled, GitHub Actions accepts all actions
+without SHA pinning, and AuthPath's analyzer overlaps materially with an
+existing Stellar signer-inspection tool. These are review and governance
+decisions, not reasons to add product features.
+
+## Authoritative repository state
 
 - Repository: <https://github.com/Stellar-AuthPath/authpath>
-- Current main SHA before this correction: `4763682cee7fabe418930096057bfa962198c1d3`
-- C6 review: <https://github.com/Stellar-AuthPath/authpath/pull/6> (merged)
-- Documentation link correction: <https://github.com/Stellar-AuthPath/authpath/pull/7> (merged)
-- Published examples page correction: <https://github.com/Stellar-AuthPath/authpath/pull/8> (merged)
-- Base branch: `main`
-- Base SHA before C6: `aa43350d7286624fe45bad374566bbbb3db10d1d`
-- C5 review: <https://github.com/Stellar-AuthPath/authpath/pull/5> (merged)
+- `main` SHA during this audit: `6c4b42a298cd0c6d1278e669b7ac0800d918a155`
+- Working branch for this evidence correction: `audit-final-2026-10-31`
+- Pull requests #1 through #9 are merged. PR #9 merged at
+  <https://github.com/Stellar-AuthPath/authpath/pull/9>.
+- Current `main` CI: [run 41238694004, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41238694004)
+- Current `main` documentation build/deployment: [run 41238694008, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41238694008)
+- These workflow results are GitHub-hosted checks on the stated `main` SHA;
+  local commands below are separate evidence.
+- Public documentation: <https://stellar-authpath.github.io/authpath/>
 
-The C1–C5 history was not rewritten. This phase changes documentation,
-examples, evidence, and documentation build configuration only.
+The GitHub PR list confirmed that PRs #1–#9 are merged. Historical PR checks
+are not substituted for the current-main runs above.
 
-## Problem and target users
+## Scope and method
 
-Classic Stellar accounts combine a master-key weight, additional signer
-weights, and low/medium/high thresholds. A signer or threshold rotation can
-be authorized under the current configuration yet leave a later transaction
-or the account's administrative threshold unreachable. The danger is greater
-when a plan spans multiple transactions or relies on signers whose usable
-credentials have not been confirmed.
+The audit reviewed the C1 account model, C2 authorization analysis, C3
+rotation engine, C4 CLI and report parser, C5 security/audit record, C6 docs,
+tests, fixtures, workflows, README, architecture, CLI reference, `SECURITY.md`,
+`CONTRIBUTING.md`, and license. Protocol comparisons used the linked Stellar
+specifications and stellar-core implementation sources. Dependency audit data
+was refreshed during the local check. Ecosystem research was targeted and
+public; it is not exhaustive.
 
-AuthPath is aimed at account operators, multisignature and treasury teams,
-protocol engineers, and reviewers who want a deterministic, offline
-pre-submission analysis of those assumptions. It is not aimed at custody,
-wallet signing, transaction submission, or live ledger monitoring.
+The available workspace contains no authoritative Universal Project
+Development Playbook v1.3 text. No older version or reconstructed checklist
+was substituted. Full playbook compliance is therefore **NOT VERIFIED**; the
+playbook matrix requested for an available authoritative source cannot
+honestly be completed. This limitation does not prevent the independent code,
+protocol, docs, CI, and governance checks recorded here.
 
-## Implemented solution
+## Technical and security findings
 
-The current binary, `authpath`, provides:
+| Severity | Finding | Evidence and disposition |
+| --- | --- | --- |
+| CRITICAL | None demonstrated | No reviewed path demonstrated an exploitable critical defect. |
+| HIGH | None demonstrated | No reviewed path demonstrated a high-severity defect within the stated scope. |
+| MEDIUM | Approval review is not required for protected `main` | GitHub protection reports `required_approving_review_count: 0`. Recommend at least one independent approval for contributor PRs. No setting was changed. |
+| MEDIUM | GitHub Actions trust configuration is broad | All actions are allowed and SHA pinning is not required. CI uses major-version action tags; workflow token defaults to read-only. Pin third-party actions and consider an allowlist. No setting was changed. |
+| MEDIUM | Material adjacent signer-analysis tool exists | StellarExpert's `stellar-tx-signers-inspector` analyzes signer requirements, weights, account signers, and feasibility. AuthPath must describe its incremental sequential-rotation scope precisely; see comparison below. |
+| LOW | Secret scanning and private vulnerability reporting are disabled | Authenticated repository metadata reports both off. This reduces automatic detection and private disclosure support. Recommend maintainer review of enabling them; no setting was changed. |
+| INFORMATIONAL | Audit boundary is not a formal verification | Reviewed source and tests provide evidence for the stated boundary, but do not prove correctness for all protocol versions, inputs, or ledger outcomes. |
 
-- `inspect` for validated account snapshots;
-- `analyze` for versioned rotation plans through the C2/C3 APIs;
-- `explain` for revalidating and explaining untrusted reports; and
-- `verify` for offline modeled-versus-observed configuration comparison.
+No code correction was justified by a reproduced defect. Existing negative
+tests cover malformed and oversized JSON, contradictory declarations,
+expected-state mismatches, blocked and inconclusive dependency chains,
+applied lockout-risk steps, report tampering, output races and filesystem
+failure cases. Their existence is useful regression evidence, not proof that
+all adversarial cases are covered.
 
-The implementation is deliberately local and keyless. It accepts only
-bounded, versioned JSON, preserves provenance, uses caller-supplied signer
-availability as metadata, and never reports on-chain verification.
+### Protocol behavior checked
 
-## Why Stellar protocol behavior matters
+The implementation's reviewed classic Stellar model checks transaction
+source and operation source authorization against the pre-operation account
+configuration, accumulates matching signer weights, applies threshold
+categories to SetOptions operations, and models represented signer and
+threshold changes in order. The zero-threshold path still requires a positive
+matching weight; a configured master weight of zero is not treated as usable
+authorization. The C3 engine distinguishes an applied `LOCKOUT_RISK` step from
+unapplied `BLOCKED`, `INVALID_TRANSITION`, and halted `INCONCLUSIVE` steps.
+Expected states and available signer declarations are caller-supplied
+assertions/metadata, not proof of ledger execution or private-key possession.
 
-AuthPath's conclusions depend on Stellar-specific rules rather than generic
-weighted voting. The analyzer accounts for the transaction source and each
-operation source, threshold categories, signer weight accumulation, the
-pre-operation authorization timing required by CAP-2, SetOptions changes, and
-the 20-signer boundary. The C3 engine then applies only the represented
-authorization-state changes conditionally and evaluates administrative reach
-after each modeled transaction.
+Primary protocol references checked:
 
-The checked primary references are:
+- [CAP-2: transaction-level signature verification](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0002.md)
+- [Stellar multisignature documentation](https://developers.stellar.org/docs/learn/fundamentals/transactions/signatures-multisig)
+- [stellar-core `TransactionFrame`](https://github.com/stellar/stellar-core/blob/master/src/transactions/TransactionFrame.cpp)
+- [stellar-core `OperationFrame`](https://github.com/stellar/stellar-core/blob/master/src/transactions/OperationFrame.cpp)
+- [stellar-core `SignatureChecker`](https://github.com/stellar/stellar-core/blob/master/src/transactions/SignatureChecker.cpp)
+- [stellar-core `SetOptionsOpFrame`](https://github.com/stellar/stellar-core/blob/master/src/transactions/SetOptionsOpFrame.cpp)
+- [CAP-21 transaction preconditions and extra signers](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0021.md)
+- [SEP-23 StrKeys](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0023.md)
+- [SEP-30 account recovery](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0030.md)
 
-- [CAP-2 transaction-level signature verification](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0002.md);
-- [Stellar transaction XDR](https://github.com/stellar/stellar-xdr/blob/main/Stellar-transaction.x);
-- [SEP-23 strkeys](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0023.md);
-- [stellar-core TransactionFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/TransactionFrame.cpp);
-- [stellar-core OperationFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/OperationFrame.cpp); and
-- [stellar-core SetOptionsOpFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/SetOptionsOpFrame.cpp).
+The implementation does not encode a ledger protocol version. Its classic
+authorization model follows CAP-2 behavior; it does not establish compatibility
+with every historical or future protocol version. Fee-bump semantics, extra
+signers/preconditions, Soroban authorization, and other unsupported operation
+behavior are outside the modeled boundary and should not be inferred from a
+successful result.
 
-No AuthPath-specific protocol or architecture specification was available,
-and the Universal Project Development Playbook v1.3 was not available as an
-authoritative text. Full compliance with either unavailable source cannot be
-claimed.
+## Local verification performed
 
-## Reproducible CLI demonstrations
+The following completed on the locked workspace. Rust 1.99.1 is the repository
+toolchain pin; Rust 1.87.0 was separately installed and tested as the declared
+MSRV.
 
-From a clean checkout, the following commands use only repository fixtures:
+| Command | Rust 1.99.1 | Rust 1.87.0 |
+| --- | --- | --- |
+| `cargo fmt --all -- --check` | PASS | PASS |
+| `cargo check --workspace --all-targets --locked` | PASS | PASS |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | PASS | PASS |
+| `cargo test --workspace --all-targets --locked` | PASS, 166 tests | PASS, 166 tests |
+| `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked` | PASS | PASS |
+| `cargo audit --deny warnings` | PASS | PASS |
+
+The refreshed cargo-audit database contained 1,395 advisories; 30 locked
+dependencies were scanned. The command exited successfully without a reported
+vulnerability or warning. This records the database snapshot at audit time,
+not a guarantee about future advisories. `Cargo.lock` is present and all
+workspace checks used `--locked`.
+
+The current `main` workflows independently passed as linked above. The
+documentation workflow uses mdBook 0.4.52. A local mdBook build succeeded.
+The deployed root, architecture, CLI, C5 audit, submission-readiness, and
+examples pages returned HTTP 200, and the site's internal navigation links
+resolved during this audit.
+
+## Reproducible CLI demonstration
+
+From a clean checkout at the audited `main` SHA:
 
 ```sh
 cargo build --workspace --locked
-cargo run -p authpath-cli -- inspect examples/account-snapshot.json
-cargo run -p authpath-cli -- --format json analyze \
+cargo run --locked -p authpath-cli -- inspect examples/account-snapshot.json
+cargo run --locked -p authpath-cli -- --format json analyze \
   examples/rotation-plan.json --output /tmp/authpath-report.json
-cargo run -p authpath-cli -- explain /tmp/authpath-report.json
-cargo run -p authpath-cli -- verify \
+cargo run --locked -p authpath-cli -- explain /tmp/authpath-report.json
+cargo run --locked -p authpath-cli -- verify \
   --report /tmp/authpath-report.json \
   --observed examples/observed-configuration.json
-cargo run -p authpath-cli -- analyze examples/blocked-rotation-plan.json
-cargo run -p authpath-cli -- analyze examples/lockout-risk-rotation-plan.json
+cargo run --locked -p authpath-cli -- analyze examples/blocked-rotation-plan.json
+cargo run --locked -p authpath-cli -- analyze examples/lockout-risk-rotation-plan.json
 ```
 
-Observed behavior for the classification examples is exit code `10` for both
-`BLOCKED` and applied `LOCKOUT_RISK`. The supported example exits `0` for
-analysis, explanation, and exact offline comparison. The final two commands
-are findings requiring attention; they are not failed process executions.
+Observed outcomes: inspect, supported analysis, explain, and exact offline
+comparison exit `0`; blocked and applied lockout-risk analyses exit `10` and
+preserve their findings. Examples are synthetic fixtures, not observed ledger
+data. The CLI's result is not proof that a transaction will execute.
 
-## Safety model
+## Trust boundary and product limitations
 
-The result types are intentionally separate:
+The product distinguishes configured authorization sufficiency, conditional
+rotation modeling, offline configuration comparison, and independently
+verified ledger evidence. Only the first three are implemented, and all
+inputs are untrusted local JSON. Provenance labels remain caller declarations.
 
-1. configured authorization sufficiency in supplied snapshots;
-2. conditional ordered rotation modeling;
-3. offline comparison of modeled fields with an observed file; and
-4. independently verified ledger evidence, which is not implemented.
+AuthPath does not fetch network state, hold keys, sign, submit transactions,
+prove private-key possession, or verify ledger execution. It cannot guarantee
+that modeled transactions will be accepted or succeed. Unsupported classic
+operations/features and Soroban authorization are outside scope. It is not a
+production financial decision system or substitute for protocol review.
 
-`LOCKOUT_RISK` can be an applied step with a valid next modeled state, while
-`BLOCKED`, `INVALID_TRANSITION`, and halted `INCONCLUSIVE` steps stop dependent
-analysis. Expected configurations are caller assertions, not proof of ledger
-execution. A report's `verified_on_chain` field remains false, and matching
-JSON never upgrades caller-provided provenance.
+## Originality and ecosystem comparison
 
-## Verification evidence
+Research date: 2026-10-31. This was a targeted review of public sources, not
+an exhaustive census. Capabilities below are limited to what the cited
+documentation/repository describes.
 
-The merged C1–C5 baseline recorded the following local results on the pinned
-Rust 1.99.1 toolchain:
+| Comparator | Verified capabilities | Overlap with AuthPath | Distinction and reviewer-confidence risk |
+| --- | --- | --- | --- |
+| [Stellar CLI](https://github.com/stellar/stellar-cli) | Broad Stellar command-line workflows for building, signing, and interacting with network transactions and contracts | Account and transaction operations in CLI form | Operational/network-oriented and broader; AuthPath's offline sequential reachability analysis is narrower. |
+| [Stellar Lab](https://lab.stellar.org/) | Interactive account/transaction construction, Set Options, simulation and network submission workflows | Directly handles signer/threshold configuration and transaction simulation | Different interactive workflow; overlap means AuthPath should not imply it is the only way to reason about multisig configuration. |
+| [StellarExpert signer inspector](https://github.com/stellar-expert/stellar-tx-signers-inspector) | Inspects account/transaction signer requirements, signer weights, and signature feasibility | Material overlap in answering which signers/weights can authorize a transaction | Closest identified comparator. AuthPath's implemented distinction is ordered, multi-transaction conditional state/reachability analysis plus report validation; this is incremental, not category-first novelty. |
+| [Stellar Guard `multisig-utils`](https://github.com/stellarguard/multisig-utils) | Multisig signature-feasibility utilities and coordinator/submission workflow | Signer feasibility and weighted authorization | AuthPath is an offline Rust plan analyzer without signing/coordinator/submission surfaces. |
+| [SEP-30](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0030.md) | Standardized account-recovery server interactions and signer-based recovery | Recovery can involve signer/threshold changes | Recovery/signing service protocol, not an offline rotation safety analyzer. |
+| [Wraith multisig runbook](https://github.com/wraith-protocol/contracts/blob/develop/stellar/MULTISIG.md) | Procedural multisig account/signer rotation guidance in a project runbook | Signer rotation and threshold safety | Procedure for that project's workflow rather than a general validated local analysis engine. |
+| [OpenZeppelin Stellar account policies](https://docs.openzeppelin.com/stellar-contracts/accounts/policies) | Soroban contract-account policy mechanisms including weighted authorization | General weighted threshold concepts | Different Soroban contract-account model; not classic Stellar account signer analysis. |
+| [GrantFox](https://communityfund.stellar.org/project/grantfox-4zq) | Public project describes a collaboration hub connecting contributors with Stellar projects/issues and syncing GitHub | Potentially relevant as a contribution/funding channel | No demonstrated analyzer overlap. Public GrantFox material did not establish an equivalent AuthPath project; absence from this search is not proof none exists. |
 
-| Check | Result |
-| --- | --- |
-| `cargo fmt --all -- --check` | Passed |
-| `cargo check --workspace --all-targets --locked` | Passed |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
-| `cargo test --workspace --all-targets --locked` | 166 passed across five targets |
-| `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked` | Passed |
-| `cargo audit --deny warnings` | Passed; no vulnerability or warning reported |
+The [Stellar Drips Wave](https://www.drips.network/wave/stellar) page was
+reviewed, but page search is not a complete approved-project registry query.
+This audit does not establish AuthPath's admission or approval status.
+The defensible differentiation is a specific mechanism—offline conditional
+analysis across ordered signer/threshold rotations—not a claim of uniqueness.
+The signer-inspector overlap creates a real originality and reviewer
+confidence risk that should be addressed with precise positioning and user
+validation before making funding claims. Neither Drips nor GrantFox approval
+can be predicted from this evidence.
 
-The complete locked workspace checks also passed under Rust 1.87.0, including
-formatting, check, Clippy, all 166 tests, and Rustdoc. The repository pins
-Rust 1.99.1 for development and CI. The dependency audit used cargo-audit
-0.22.2 and the local RustSec database; it was not a required CI job.
+## Governance verification
 
-The latest main commit is `4763682cee7fabe418930096057bfa962198c1d3`, the
-merge commit for PR #8. Its PR checks passed: [CI](https://github.com/Stellar-AuthPath/authpath/actions/runs/41163390775)
-and [Documentation](https://github.com/Stellar-AuthPath/authpath/actions/runs/41163390874).
-PR #7 also passed its CI run
-(https://github.com/Stellar-AuthPath/authpath/actions/runs/41162755782).
-These are GitHub results for those PR heads; they are distinct from local
-verification and do not imply a new CI run on every later main commit.
+Authenticated GitHub API access was available for this audit; the table
+records actual reported repository settings. No settings were changed.
 
-## C5 evidence
-
-The [C5 audit record](c5-audit.md) documents the supported protocol boundary,
-adversarial tests, report-tampering defenses, atomic no-replace output
-installation, confirmed findings, dependency results, and known limitations.
-It also records the applied-`LOCKOUT_RISK` validation correction and the
-engine-generated producer/consumer regression tests.
-
-## Originality and ecosystem positioning
-
-This review checked public, materially adjacent tools and references on
-2026-10-31. It was a targeted search, not an exhaustive ecosystem census.
-
-| Existing offering | Overlap | Boundary and AuthPath distinction |
+| Control | Verified state | Assessment |
 | --- | --- | --- |
-| [Stellar Lab](https://lab.stellar.org/) | Reads/builds account and transaction operations, including Set Options weights, thresholds, and signers | Interactive transaction construction and network-facing workflows; it is not the same as AuthPath's offline multi-transaction conditional reachability report |
-| [Stellar CLI](https://github.com/stellar/stellar-cli) | Developer CLI for Stellar transactions, identities, signing, and network workflows | Broader operational tooling with signing/network surfaces; AuthPath intentionally has none of those surfaces |
-| [SEP-30 account recovery](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0030.md) | Key rotation and recovery workflows using signer changes | A signing-server protocol; AuthPath does not custody keys or sign and instead reviews caller-supplied plans |
-| [LumenWipe](https://github.com/LumenWipe/lumenwipe) | Account-state inspection and recovery/closure transaction planning | Live-network and transaction-building recovery product; AuthPath is a narrower offline authorization/rotation analysis tool |
+| `main` requires successful CI | Yes: strict required status context `checks` | PASS for this specific required check |
+| Pull request approval required | No: required approving review count is 0 | NEEDS WORK; recommend at least one independent approval |
+| Administrators covered | Yes: `enforce_admins.enabled=true` | PASS |
+| Force pushes restricted | Yes: disabled | PASS |
+| Branch deletion restricted | Yes: disabled | PASS |
+| Secret scanning | Disabled | NEEDS WORK; maintainer may enable after assessing repository plan/settings |
+| Secret-scanning non-provider patterns | Disabled | NEEDS WORK |
+| Push protection | Disabled | NEEDS WORK |
+| Private vulnerability reporting | Disabled | NEEDS WORK; provide a clear private disclosure path |
+| Workflow token default | Read-only; workflows cannot approve PRs | PASS, least privilege at repository default |
+| Actions allowlist / SHA pinning | All actions allowed; SHA pinning not required | NEEDS WORK; consider allowlisting and pinning third-party actions |
+| CI PR trigger | `pull_request`; read-only `contents` permission | PASS against the specific `pull_request_target`/write-token risk reviewed |
+| SECURITY.md | Present and linked | PASS for presence; private reporting path should be clarified because GitHub private reporting is off |
 
-The supported differentiation is mechanism-based and modest: AuthPath combines
-offline C2 authorization checks with C3 ordered signer/threshold modeling,
-explicit signer-availability intersections, conditional lockout findings, and
-strict validation of independently loaded reports. These capabilities are
-implemented and tested in this repository. They do not justify a claim that
-AuthPath is unique or that any external project is inferior. A maintainer or
-independent reviewer should perform a broader landscape review before making
-an originality or funding claim.
+The repository uses `actions/checkout@v4` and
+`dtolnay/rust-toolchain@1.99.1`, which are mutable tags rather than immutable
+commit pins. Read-only workflow permissions reduce impact but do not eliminate
+the supply-chain risk of unpinned actions. Recommendations are maintainer
+decisions; none was changed as part of this audit.
 
-## Governance and repository readiness
+## Playbook traceability
 
-Repository facts verified locally or through accessible GitHub metadata:
-
-- `LICENSE` is Apache-2.0.
-- `SECURITY.md` and `CONTRIBUTING.md` are present and linked from the README.
-- The repository is public and `main` is the default branch.
-- GitHub Pages is configured to publish from the main branch using GitHub
-  Actions. The Pages API confirms the public URL
-  <https://stellar-authpath.github.io/authpath/>. The root and examples page
-  returned HTTP 200 after PR #8 merged.
-- Main branch protection, required CI contexts, approving-review requirements,
-  and administrator enforcement could not be verified: the branch-protection
-  API returned 404 to the available credentials.
-- Secret-scanning and private-vulnerability-reporting settings could not be
-  verified: repository security endpoints returned 404 or omitted those
-  fields for the available credentials. Dependabot settings were not changed.
-- No releases or tags were present at review time.
-- A targeted tracked-file scan found no private-key PEM blocks, obvious secret
-  assignments, or AI co-author trailers. This is not a substitute for a
-  dedicated secret-scanning service.
-
-The repository has a lean issue surface and no generated backlog, release
-claim, partner claim, usage metric, or reviewer approval claim.
+The authoritative Universal Project Development Playbook v1.3 was not present
+in the authorized workspace or repository. Accordingly, no requirement list
+or traceability matrix has been reconstructed from memory or an older version.
+Overall playbook compliance is **NOT VERIFIED**. Product-scope rationale is
+clear for several absences: the defined artifact is an offline CLI, so a web
+app, Soroban contract, database, hosted service, and live Testnet transaction
+flow are not required to demonstrate its current function. This rationale is
+not a substitute for unknown playbook requirements.
 
 ## Readiness matrix
 
-| Area | Status | Evidence or remaining condition |
+| Area | Status | Evidence / condition |
 | --- | --- | --- |
-| Technical correctness | PASS within the documented operation boundary | C1–C5 tests, protocol comparison, and C3 producer/consumer tests |
-| Local input/report security | PASS within the offline boundary | C5 adversarial and filesystem tests; no keys or network surface |
-| Reproducibility | PASS locally | Rust 1.87.0 and 1.99.1 locked-workspace verification |
-| Documentation accuracy | PASS after C6 and documentation PRs #7 and #8 | README, architecture, CLI, audit, examples, and evidence record updated |
-| Architecture completeness | PASS for the current MVP | Trust boundaries and unsupported behavior are explicit |
-| Stellar-specific value | PASS within a narrow scope | Uses threshold, signer, source-account, CAP-2, and rotation semantics |
-| Originality evidence | NEEDS WORK | Targeted research only; no exhaustive landscape or uniqueness claim |
-| Governance | NOT VERIFIED | Branch protection, secret scanning, and private vulnerability reporting are inaccessible through the available GitHub API permissions |
-| Public documentation site | PASS | Pages API confirms workflow deployment; root and examples page returned HTTP 200 |
-| Independent review | NOT VERIFIED | This phase prepares evidence but does not substitute for external review |
+| Technical correctness | PASS within reviewed scope | Protocol-source comparison, implementation review, 166 tests on Rust 1.87.0 and 1.99.1; not formal verification or exhaustive protocol-version coverage |
+| Security | PASS within documented local-input boundary; residual governance risk | Adversarial JSON/report/filesystem tests and local source review; no keys/network/submission; repository security features are disabled |
+| Reproducibility | PASS | Locked workspace checks and fixture-based CLI demonstrations |
+| Documentation accuracy | PASS for reviewed current pages | README, architecture, CLI, C5 audit, examples, submission evidence; published pages fetched and navigation checked |
+| Architecture | PASS for the current MVP | Trust boundaries, modeled behavior and exclusions documented |
+| Stellar-specific value | PASS, narrow | Uses classic threshold, signer, source-account, CAP-2 and ordered rotation semantics |
+| Originality evidence | PARTIAL | Closest signer-inspector overlap found; targeted research, not exhaustive; differentiation is incremental and bounded |
+| Governance | NEEDS WORK | CI required and admin coverage present; approvals, scanning, private reporting, action restrictions/pinning need maintainer review |
+| Playbook compliance | NOT VERIFIED | Authoritative v1.3 source unavailable |
+| Independent external review | NOT VERIFIED | This audit does not substitute for an independent approving protocol/security reviewer |
+| Public documentation site | PASS | Pages API and live HTTP checks; current deployment workflow succeeded |
 
-## Remaining submission blockers
+## Smallest justified next actions
 
-The project should not be described as ready for submission solely because the
-code checks are green. Before a final submission claim, maintainers should:
+1. A maintainer should decide whether to require one independent PR approval
+   and enable secret scanning, push protection, and private vulnerability
+   reporting; review GitHub Actions allowlisting and immutable pins.
+2. Obtain the actual authoritative playbook v1.3 text and run its traceability
+   review if playbook compliance is a submission requirement.
+3. Ask an independent Stellar protocol reviewer to assess the supported classic
+   authorization boundary and review the documented overlap with
+   `stellar-tx-signers-inspector` before making originality claims.
+4. Validate the target program's current eligibility and submission criteria
+   directly before applying. No submission was made in this audit.
 
-1. obtain independent technical and protocol review;
-2. have a repository administrator verify main branch protection, required
-   approvals, administrator enforcement, secret scanning, and private
-   vulnerability reporting; consider requiring an approval and enabling
-   secret scanning if currently off;
-3. perform a broader, dated ecosystem/originality review; and
-4. decide whether audit and MSRV checks belong in required CI rather than only
-   local evidence.
+No code-level blocker was reproduced, so no Rust change or code PR was created.
+This dated evidence correction is documentation only.
 
 ## Provisional verdict
 
-**NEEDS WORK — evidence prepared for independent review, but final submission
-readiness is not established.** The current implementation is reviewable and
-reproducible within its narrow offline boundary. No approval, adoption,
-on-chain verification, public documentation deployment, or originality
-guarantee is claimed.
+**CONDITIONALLY READY**
+
+The MVP is reviewable and reproducible within its stated offline, classic
+authorization scope. A stronger READY verdict is not supported because
+independent external review has not occurred, main requires no approving
+review, repository security settings and action restrictions need maintainer
+decisions, the authoritative playbook is unavailable, and originality
+positioning faces material overlap with an existing signer-analysis tool.
+These limitations are disclosed rather than inferred away from green CI.
