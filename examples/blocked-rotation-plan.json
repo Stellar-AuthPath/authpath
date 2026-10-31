@@ -1,0 +1,49 @@
+{
+  "schema": "authpath.rotation_plan.v1",
+  "initial_accounts": [
+    {
+      "schema": "authpath.account_snapshot.v1",
+      "account_id": "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H",
+      "master_key_weight": 1,
+      "thresholds": {
+        "low": 1,
+        "medium": 2,
+        "high": 3
+      },
+      "signers": [
+        {
+          "key": "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA",
+          "weight": 2,
+          "availability": "available"
+        }
+      ],
+      "provenance": {
+        "kind": "caller_provided",
+        "network": "Test Network",
+        "ledger_sequence": null
+      }
+    }
+  ],
+  "available_signers": [
+    {
+      "kind": "ed25519",
+      "key": "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H",
+      "code": null
+    }
+  ],
+  "transactions": [
+    {
+      "source_account": "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H",
+      "operations": [
+        {
+          "kind": "payment",
+          "source_account": null,
+          "changes": null
+        }
+      ],
+      "signer_availability": [],
+      "reserve": "unverified",
+      "expected": []
+    }
+  ]
+}

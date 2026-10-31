@@ -1,0 +1,10 @@
+[book]
+title = "Stellar AuthPath"
+authors = ["AuthPath contributors"]
+language = "en"
+src = "."
+description = "Offline analysis of classic Stellar authorization and signer/threshold rotation plans."
+
+[output.html]
+git-repository-url = "https://github.com/Stellar-AuthPath/authpath"
+edit-url-template = "https://github.com/Stellar-AuthPath/authpath/edit/main/docs/{path}"

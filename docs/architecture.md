@@ -1,354 +1,238 @@
-# Initial architecture
+# AuthPath architecture
 
-## Status and source audit
+## Scope and evidence status
 
-Phase C1 established the repository foundation and account configuration
-model. Phase C2 adds a conservative authorization-threshold analysis engine
-for classic Stellar transactions. Phase C3 adds a conditional rotation safety
-engine over sequences of such transactions. Phase C4 adds a local CLI and
-versioned JSON reporting boundary over those validated APIs.
+AuthPath is a small, offline Rust workspace. C1–C5 established the validated
+account model, configured-authorization analyzer, conditional rotation engine,
+local CLI, report boundary, and security hardening. C6 documents that existing
+implementation for independent review; it does not add a ledger adapter,
+wallet, signing service, hosted API, or transaction-submission path.
 
-The checkout and the public `Stellar-AuthPath/authpath` repository were empty
-at initialization. No approved AuthPath architecture document or
-protocol-semantics specification was available in them, in the public
-organization repositories, or in the local workspace. C2 therefore uses only
-the authoritative Stellar protocol and stellar-core references listed below;
-it does not claim to have reviewed unavailable Phase B files.
+No approved AuthPath-specific architecture or protocol-semantics
+specification was available in the repository or local instruction resources.
+The Universal Project Development Playbook v1.3 was also not available as an
+authoritative text and was not reviewed. Those absences are recorded rather
+than filled with assumptions.
 
-The following external protocol and tooling references were checked while
-choosing the narrow C1 types:
+Protocol behavior was compared with primary Stellar material, including
+[CAP-2](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0002.md),
+[SEP-23](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0023.md),
+[Stellar transaction XDR](https://github.com/stellar/stellar-xdr/blob/main/Stellar-transaction.x),
+and the relevant stellar-core transaction, operation, signature-checking, and
+SetOptions implementation files. The [C5 audit](c5-audit.md) records the
+checked rules, tests, findings, and unresolved boundary.
 
-- [SEP-23: Strkeys](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0023.md)
-  defines canonical textual forms for Stellar account and signer identifiers.
-- [Stellar Set Options API reference](https://developers.stellar.org/docs/data/apis/horizon/api-reference/resources/operations/object/set-options)
-  documents the 0–255 threshold domain and signer/master-key weight behavior.
-- [CAP-2: Transaction level signature verification](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0002.md)
-  requires transaction-level signature checks before operation side effects.
-- [stellar-core OperationFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/OperationFrame.cpp)
-  defines operation-source lookup, the default medium threshold, and
-  per-operation threshold checks.
-- [stellar-core TransactionFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/TransactionFrame.cpp)
-  checks the transaction source at the low threshold and evaluates each
-  operation source independently.
-- [stellar-core SignatureChecker](https://github.com/stellar/stellar-core/blob/master/src/transactions/SignatureChecker.cpp)
-  accumulates signer weight and compares it with the needed weight only after
-  a signature matches a listed signer. C3 relied on this to correct C2's
-  handling of a zero threshold.
-- [stellar-xdr](https://github.com/stellar/stellar-xdr) fixes `MAX_SIGNERS`
-  at 20 and `MAX_OPS_PER_TX` at 100.
-- [stellar-core SetOptionsOpFrame](https://github.com/stellar/stellar-core/blob/master/src/transactions/SetOptionsOpFrame.cpp)
-  classifies signer/master-weight/threshold changes as high threshold and
-  other supported SetOptions variations as medium threshold.
-- [Rust 1.99.1 release list](https://blog.rust-lang.org/releases/) records the
-  current stable release checked on 2026-10-29.
-- [`stellar-strkey` 1.0.0](https://crates.io/crates/stellar-strkey/1.0.0)
-  is the official Rust strkey crate selected for canonical parsing. Its
-  upstream documentation currently describes the crate as early,
-  incomplete, and not recommended for use, so it is intentionally isolated
-  in `authpath-model` and is not used to make authorization decisions.
+## System context and data flow
 
-## Planned crate boundaries
-
-```text
-authpath-model      validated, provenance-bearing account data
-        |
-authpath-analysis   C2 authorization sufficiency analysis
-        |
-authpath-stellar    Stellar ledger/network adapters (deferred)
-        |
-authpath-cli        offline user-facing commands and reports
+```mermaid
+flowchart LR
+    U[Caller] -->|bounded JSON files| M[authpath-model\nvalidated snapshots]
+    M --> A[authpath-analysis\nC2 authorization]
+    A --> R[rotation engine\nC3 conditional sequence]
+    R --> V[CLI report validator\nC4/C5 untrusted boundary]
+    V --> O[human or deterministic JSON output]
+    S[observed configuration file] --> M
+    S --> V
+    L[(Stellar ledger)] -. not fetched or verified .-> M
+    K[private keys and signatures] -. never enter .-> U
+    N[network and transaction submission] -. intentionally absent .-> V
 ```
 
-authpath-model, authpath-analysis, and authpath-cli have independently
-testable behavior. authpath-stellar remains a planned logical boundary, not
-an empty API.
+The data flow is local and one-way for analysis. A caller supplies snapshots,
+plans, availability declarations, expected configurations, and observed
+configurations. The model validates their shape and protocol-domain values;
+validation does not turn caller claims into ledger evidence.
 
-## C1 model boundary
+`authpath-cli` invokes public model and analysis APIs. It does not duplicate
+threshold arithmetic or transition logic. `explain` and `verify` treat reports
+as untrusted input and validate them again before presenting their contents.
 
-An account configuration snapshot contains:
+## Trust boundaries
 
-- a canonical Stellar account identity;
-- a master-key weight in the protocol’s one-byte weight domain;
-- low, medium, and high thresholds in that same domain;
-- zero or more Ed25519 signer configurations;
-- an explicit availability declaration for every configured signer; and
-- provenance identifying how the snapshot was obtained and, when known, the
-  Stellar network identity.
+### Untrusted local input
 
-Availability is metadata supplied by the caller. It does not contain private
-key material, and it is never inferred from a configured weight. An
-`Unavailable` declaration is therefore different from a zero configured
-weight.
+Every JSON file is bounded before and during reading. Schemas are versioned,
+unknown fields are rejected, collections are bounded, and malformed Stellar
+identities, duplicate signers, missing required fields, contradictory
+availability declarations, and unsupported versions fail closed. The CLI does
+not execute code from input and does not interpret input as a path to a secret.
 
-The model accepts zero-weight signer entries because C1 explicitly requires
-that snapshot boundary to be representable and testable. It does not model
-the Set Options operation or claim that a zero-weight entry is a valid
-operation request. Raw signer weights outside 0–255 are rejected, even though
-the underlying Stellar XDR field is wider, because the account weight domain
-being modeled is one byte.
+Output installation is also a boundary: a temporary file is written and
+synced in the destination directory. Without `--force`, an atomic hard-link
+operation creates the final directory entry without replacing an existing or
+concurrently created destination. Unsupported filesystem behavior is an
+operational error, not an unsafe fallback.
 
-Unsupported Stellar signer kinds are rejected at the conversion boundary.
-Only Ed25519 signer keys are represented by the C1 model. Pre-authorized
-transaction, hash-X, signed-payload, and future signer kinds are not silently
-coerced into Ed25519 keys.
+### Provenance and network identity
 
-## Provenance and network identity
+An account snapshot carries a provenance designation and optional network
+identity. `caller_provided` means exactly that the caller supplied the file.
+`ledger` provenance requires the required ledger fields in the model, but the
+CLI does not fetch, authenticate, or independently verify them. Modeled final
+states are marked `modeled`; they cannot claim ledger provenance. `verify`
+retains the observed file's provenance and never upgrades it.
 
-The snapshot provenance records whether data was supplied directly or read
-from a ledger-backed source, together with an optional network identity and
-optional ledger sequence. C1 does not fetch or verify public ledger evidence;
-callers must provide provenance explicitly. The model rejects ledger-backed
-provenance without a network identity or ledger sequence, and rejects a
-network identity with an empty network passphrase.
+### Credentials and execution
 
-## C2 authorization analysis
+No private key, seed phrase, signature byte, wallet connection, RPC endpoint,
+database, or transaction submission is accepted by the current product. A
+configured public signer and an `available` declaration are separate pieces of
+caller metadata. Neither proves private-key possession or successful
+transaction execution.
 
-### Inputs and output
+## Workspace components
 
-The analyzer accepts:
-
-- a validated transaction description containing a transaction source and
-  authorization-relevant operation descriptions;
-- a deduplicated collection of validated account snapshots; and
-- an explicitly declared set of Ed25519 public identities available to the
-  caller.
-
-It returns one finding for the transaction-source check and one finding for
-each supported operation. Each finding identifies the account and subject,
-threshold category, required configured weight, available configured weight,
-whether the requirement is met, and a structured missing-weight explanation.
-Successful reports also expose fixed evidence limitations.
-
-An unmet threshold is a valid negative result. Missing snapshots, duplicate
-snapshots, unsupported operations or signer kinds, malformed descriptions,
-network mismatch, and missing network provenance return structured errors and
-must be treated as inconclusive rather than safe.
-
-### Supported operation types and thresholds
-
-| Authorization subject | Supported type or variation | Threshold |
+| Component | Responsibility | Trust statement |
 | --- | --- | --- |
-| Transaction source | Every supported transaction | Low |
-| Operation | Payment | Medium |
-| Operation | BumpSequence | Low |
-| Operation | AccountMerge | High |
-| Operation | SetOptions with master weight, any threshold, or signer present | High |
-| Operation | SetOptions with only flags, inflation destination, or home domain present | Medium |
+| `authpath-model` | Canonical account IDs, Ed25519 signer records, weights, thresholds, availability, and provenance | Typed validation of supplied data; not a ledger reader |
+| `authpath-analysis` | C2 authorization findings and C3 ordered rotation modeling | Conditional arithmetic and state transitions; not signature or execution proof |
+| `authpath-cli` | Strict JSON adapters, four commands, report validation, output, and exit codes | Offline presentation and comparison; no network or key surface |
+| `.github/workflows/ci.yml` | Reproducible format, check, lint, test, and Rustdoc checks | CI evidence for the pinned toolchain only |
+| `docs/` and `examples/` | Source-controlled reference, audit record, and deterministic fixtures | Synthetic and caller-provided examples, never ledger evidence |
 
-Other Stellar operation types are rejected explicitly. C2 does not assign a
-default threshold to an unsupported operation.
+There is no `authpath-stellar` crate. Ledger or network adapters are a
+deliberate non-goal until separately specified and reviewed.
 
-### Source-account behavior
+## C1: validated account model
 
-An operation with no explicit source uses the transaction source. An operation
-with an explicit source is checked against that account's own snapshot and
-thresholds. Configured weights from different accounts are never combined.
-The transaction source is always checked separately at its low threshold.
+An account snapshot contains a canonical Stellar account identity, master-key
+weight, low/medium/high thresholds, zero or more Ed25519 signers, an explicit
+availability declaration for each configured signer, and provenance.
 
-A threshold of zero does not waive signing: stellar-core compares the
-accumulated weight to the threshold only after a signature matches a listed
-signer, so at least one declared identity with positive configured weight is
-required for every check (`NoMatchingSigner` otherwise).
+Weights and thresholds use the modeled 0–255 account domain. The model enforces
+the 20-signer limit, duplicate-key rejection, account-master-key exclusion
+from additional signers, threshold boundaries, and canonical public-key
+parsing. Zero-weight signer records remain representable in snapshots but are
+not treated as usable signing weight. Unsupported signer kinds are not
+coerced into Ed25519.
 
-The master key contributes only when its Ed25519 identity is explicitly in the
-available set. An additional signer contributes only when it is both
-explicitly marked available in its snapshot and present in the caller's
-available set. Zero weights contribute zero. Repeated available identities
-are deduplicated.
+Availability is caller metadata. `Unavailable` is not the same as a zero
+configured weight, and `Available` is not private-key possession.
 
-The analyzer reuses the input snapshots for every operation. It does not
-apply a SetOptions change while analyzing a later operation in the same
-transaction; CAP-2 requires signature checks before operation side effects.
-State changes visible to later transactions are outside C2 and are handled by
-the C3 rotation engine below.
+## C2: configured authorization analysis
 
-### Safety meanings and limitations
+The C2 analyzer receives a validated transaction description, validated
+snapshots, and an explicitly deduplicated set of available Ed25519 identities.
+It checks the transaction source at the low threshold and each operation
+source against its own account and threshold category. Weights from different
+accounts are never combined, and all operations in one transaction use the
+pre-transaction state for authorization.
 
-MeetsConfiguredRequirements means only that the declared identities reach the
-configured threshold values in the supplied snapshots. It does not mean that
-signature bytes are valid, that a caller possesses any private key, that the
-snapshots came from verified ledger evidence, or that the transaction will
-execute successfully.
+The supported analyzer boundary includes payment, bump-sequence, AccountMerge,
+and the supported SetOptions threshold/signer/flag/home-domain variations.
+The rotation-plan boundary is narrower: it rejects AccountMerge and unknown
+operations because C3 only models the listed authorization-state transitions.
 
-C2 does not model balances, reserves, sequence numbers, fees, preconditions,
-asset validity, operation effects, transaction serialization, cryptographic
-signatures, live network state, or post-transaction account configuration.
+A zero threshold still requires a matching listed positive-weight signer. The
+master key contributes only when its identity is declared available. An
+additional signer contributes only when both its snapshot availability and the
+plan-wide availability declaration allow it. These rules follow the checked
+CAP-2 and stellar-core behavior; they do not assert that signatures exist.
 
-## C3 rotation safety engine
+## C3: conditional rotation modeling
 
-C3 lives in the `rotation` module of `authpath-analysis` and reuses the C1
-model and the C2 `analyze` function unchanged.
+A `RotationPlan` contains initial snapshots, a global Ed25519 availability
+set, and ordered planned transactions. Each positive-weight signer addition
+or reweighting has a per-operation availability declaration. The effective
+availability for reachability is the intersection of the account-state
+declaration and the plan-wide set. A declaration that is missing, contradictory,
+or inconsistent with the global set is inconclusive; possession is never
+inferred.
 
-### C2 correction made in C3
+For each transaction, the engine:
 
-C2 reported a requirement as met when available weight equalled a threshold of
-zero, including when no signer was available. stellar-core compares weight
-with the needed weight only after a signature matches a listed signer, and the
-master key is listed only while its weight is non-zero. A threshold of zero
-therefore still needs one matching signer of positive weight. C2 now reports
-`NoMatchingSigner` in that case.
+1. authorizes the transaction and all operations against the pre-transaction
+   state;
+2. checks availability declarations;
+3. applies supported authorization-state changes conditionally;
+4. compares caller-supplied expected configurations with the candidate state;
+5. evaluates administrative reachability of changed accounts; and
+6. commits the candidate state only when the result supplies a valid next
+   state.
 
-### Plan representation
+Expected configurations are caller assertions, not proof of ledger execution.
+An expectation mismatch therefore stops dependent analysis and causes later
+steps to be `INCONCLUSIVE`. An applied `LOCKOUT_RISK` step is different: the
+engine has a valid next modeled state, so later transactions may be evaluated
+while the warning remains part of the overall result. An unapplied blocked,
+invalid, or inconclusive step has no authoritative next state; later steps are
+unevaluated `INCONCLUSIVE` placeholders.
 
-A `RotationPlan` holds the initial validated snapshots, the declared
-available signer identities, and an ordered list of `PlannedTransaction`s.
-Each planned transaction carries a C2 `TransactionDescription`, an explicit
-post-operation availability declaration for every positive-weight signer
-change, an optional reserve declaration, and optional caller-supplied expected
-resulting configurations. These expectations are assertions about the
-intended result, not proof that a ledger executed the transaction.
+Reachability compares available configured weight with each threshold and
+requires a matching positive-weight signer. It distinguishes reachable,
+dependent on unavailable signers, and permanently unreachable states when the
+represented configuration is complete. It reports administrative reachability
+loss as `LOCKOUT_RISK`; it does not claim that a transaction will execute or
+that an account is safe.
 
-The plan-wide Ed25519 identity set is the caller's explicit declaration of
-identities available throughout the sequence. A configured signer contributes
-to reachability only when its account-state availability declaration is also
-`Available`; reachability uses this intersection and never infers possession
-from weight or a public key. For a positive-weight addition or reweight,
-`Available` must be present in the plan-wide set and `Unavailable` must be
-absent. A contradiction is `INCONCLUSIVE`, not an implicit possession claim.
+### C3 classifications
 
-Rejected at construction: empty plans and plans over 256 transactions (an
-AuthPath resource bound, not a protocol limit); more than 100 operations per
-transaction (protocol limit); AccountMerge and any unknown operation; empty
-SetOptions; a signer equal to its own operation source; missing, duplicate or
-mismatched availability declarations; and expected configurations that list
-more than 20 signers, zero-weight signers, duplicates, or the master key.
-
-Declared signer kinds the model cannot evaluate (pre-authorized transaction,
-hash-X, signed payload) are retained rather than coerced and make unmet
-requirements `INCONCLUSIVE`. No availability declaration proves possession of
-any private key.
-
-### Supported and unsupported transitions
-
-| Operation | Treatment |
+| Classification | Meaning in the model |
 | --- | --- |
-| SetOptions: master-key weight | Applied |
-| SetOptions: low, medium, high thresholds | Applied |
-| SetOptions: signer add, re-weight, remove (weight 0) | Applied; 20-signer limit enforced; removing an absent signer is a no-op |
-| SetOptions: flags, inflation destination, home domain | Accepted, no authorization effect modeled |
-| Payment, BumpSequence | Authorized; no authorization-state effect |
-| AccountMerge and all other operations | Rejected at plan construction |
+| `SUPPORTED_REACHABLE` | Authorization is met and changed accounts remain administrable under declared assumptions. |
+| `INCONCLUSIVE` | Evidence is missing or unsupported, declarations conflict, an expectation mismatches, or a predecessor halted. |
+| `LOCKOUT_RISK` | The transaction is authorized and applied conditionally, but administrative reach is reduced or lost. |
+| `INVALID_TRANSITION` | A modeled transition exceeds the signer limit or contradicts a caller-declared reserve shortfall. |
+| `BLOCKED` | A supported authorization requirement is not met by the declared identities. |
 
-Operations in one transaction apply in order, and the transaction is atomic.
-Each operation applies to its own source account, so a plan may change several
-accounts and use a transaction source different from an operation source.
+The plan classification is the worst step classification. It is a severity
+summary, not a transaction result.
 
-### Step semantics
+## C4: local CLI and reports
 
-For each transaction, in order:
+The four commands are:
 
-1. C2 authorizes the transaction source at its low threshold and each
-   operation source at the operation's threshold, against the state *before*
-   the transaction. All operations use the pre-transaction state, matching
-   stellar-core's up-front signature checks.
-2. If authorization is met, availability declarations are checked against the
-   plan-wide identity set. A contradiction is `INCONCLUSIVE` and halts
-   dependent analysis.
-3. The changes are applied conditionally, assuming the transaction succeeds.
-4. Any caller-supplied expected configuration is compared with the modeled
-   result. A mismatch is `INCONCLUSIVE`; the candidate result is not accepted
-   into the sequential model because the expectation is an assertion, not
-   ledger evidence.
-5. Each account whose configuration changed is checked for administrative
-   reach (below).
-6. Only a result with no availability or expectation mismatch becomes the
-   starting state of the next transaction.
+- `inspect` displays one validated account snapshot;
+- `analyze` invokes the C3 engine and produces a conditional report;
+- `explain` validates and explains a report supplied as untrusted input; and
+- `verify` compares modeled fields with an observed configuration offline.
 
-The first step that is unauthorized, invalid, lacks evidence, or has an
-availability or expectation mismatch halts the chain. Later steps are
-reported `INCONCLUSIVE` with `PredecessorNotApplied` rather than being
-evaluated against a state that was never authoritatively accepted by the
-model.
+JSON contracts are versioned and deterministic. Human and JSON output carry
+the same classification semantics. `OFFLINE_CONFIGURATION_MATCH` is reserved
+for a complete supported plan whose modeled fields match an observed snapshot;
+it never overrides `BLOCKED`, `LOCKOUT_RISK`, `INVALID_TRANSITION`, or
+`INCONCLUSIVE`, and it never means `VERIFIED_ON_CHAIN`.
 
-### Administrative reach and lockout
+Exit codes distinguish success (`0`), invalid input (`2`), operational failure
+(`3`), findings requiring attention (`10`), and inconclusive analysis (`20`).
 
-Reachability compares weight, not signer counts. For each threshold, the
-declared-available weight is compared with the threshold (and a matching
-positive-weight signer is required). A threshold is:
+## C5: security hardening
 
-- `Reachable` when declared-available signers meet it;
-- `RequiresUnavailableSigners` when they do not, but the account's full
-  configured weight, including signers declared unavailable, would; or
-- `Unreachable` when no configured signer set can meet it.
+C5 independently reviewed the supported protocol boundary, tested adversarial
+plans and snapshots, hardened standalone report validation, and verified the
+atomic no-replace output path. Report validation checks arithmetic,
+classification/reason relationships, provenance, unsupported-signer
+disclosures, expected-state consistency, and dependent-step halting. The
+regression suite includes engine-generated reports so producer and consumer
+semantics remain aligned.
 
-A changed account that loses high-threshold reach is a `LOCKOUT_RISK`, with
-the kind recorded. Loss of low-threshold reach while high remains is also
-reported, because the account could then administer itself only through a
-different transaction source. A single sufficient signer is not a lockout.
-`Unreachable` is permanent only if the snapshot is complete; the model cannot
-see signer kinds C1 does not represent.
+The [C5 audit record](c5-audit.md) is the detailed evidence source. It records
+that the Universal Project Development Playbook was unavailable, the exact
+toolchain and dependencies, the protocol references, confirmed findings, and
+known limitations.
 
-### Classifications
+## Explicit non-goals and unresolved evidence
 
-| Classification | Meaning |
-| --- | --- |
-| `SUPPORTED_REACHABLE` | Under the declared assumptions the step is authorized and every changed account stays administrable. |
-| `INCONCLUSIVE` | Missing or unsupported evidence, contradictory declarations, an expectation that disagrees with the model, or an unevaluated predecessor. |
-| `LOCKOUT_RISK` | The step is authorized but a changed account can no longer be administered by the declared signers. |
-| `INVALID_TRANSITION` | The change exceeds the signer limit or contradicts a declared reserve shortfall. |
-| `BLOCKED` | A supported authorization requirement is not met by the declared signers. |
+AuthPath does not establish:
 
-The plan classification is the most severe step classification. No category
-means an account is safe. `SUPPORTED_REACHABLE` is a statement about the model.
+- cryptographic signature validity or private-key possession;
+- ledger-backed snapshot accuracy, transaction acceptance, or ordering;
+- balances, reserves, fees, sequence numbers, preconditions, sponsorship, or
+  concurrent changes;
+- non-authorization effects of supported operations;
+- unsupported signer kinds, fee-bump transactions, muxed accounts, or a live
+  network state; or
+- production safety, adoption, partner relationships, or reviewer approval.
 
-### What a result is not
+The project is useful as a deterministic pre-submission review aid within its
+documented boundary. It is not a substitute for a wallet, ledger query,
+signature verification, or an independent protocol review.
 
-Every report is labeled `ConditionalModel`, `verified_on_chain()` is always
-`false`, and the following are never established: signature validity,
-private-key possession, snapshot accuracy against a ledger, reserves and
-balances (`SET_OPTIONS_LOW_RESERVE`, subentry and sponsorship limits),
-sequence numbers, fees, preconditions, ledger acceptance and ordering,
-concurrent changes by other parties between planned transactions, or any
-effect other than authorization configuration. A caller may declare a reserve
-shortfall, which is treated as given; the engine never derives one.
-Derived configurations are marked as modeled and are never ledger-backed.
+## Verification and maintenance
 
-## C4 offline CLI boundary
-
-The `authpath` binary accepts four local commands: `inspect` validates and
-displays one account snapshot, `analyze` invokes the C3 rotation engine,
-`explain` validates and explains a generated analysis report, and `verify`
-performs an offline comparison with an independently supplied observed
-configuration. JSON contracts are versioned, strict about unknown fields, and
-bounded before deserialization. The CLI reuses the existing model
-constructors and analysis APIs; it does not reimplement authorization math.
-
-Human output and JSON output carry the same conditional semantics. Analysis
-reports identify their `conditional_model` basis and never claim on-chain
-verification. Comparison reports identify their
-`offline_configuration_comparison` basis and preserve the observed file's
-provenance. An exact comparison is not cryptographic verification and is not
-proof that a ledger executed a transaction.
-
-Output files are written and synced in a same-directory temporary file. Without
-`--force`, the CLI atomically creates the destination directory entry with a
-hard link and rejects an existing or concurrently created destination; it does
-not fall back to an existence check followed by rename. With `--force`, an
-explicit replacement uses the platform's rename semantics. If no-replace hard
-links are unsupported, the CLI returns an operational error and removes its
-temporary file. Input files are read-only from the CLI's perspective. The CLI
-has no key, wallet, network, database, hosted-service, or transaction-
-submission surface.
-
-## Explicit non-goals
-
-C4 does not implement ledger/network adapters, private-key storage,
-transaction signing or submission, wallet connections, or any hosted service.
-Pre-authorized transaction, hash-X and signed-payload signers, AccountMerge,
-fee-bump transactions, sponsorship and muxed accounts remain outside the
-supported model. The full authorization engine remains incomplete.
-
-## Verification
-
-The repository CI runs formatting, workspace compilation, Clippy with denied
-warnings, all workspace tests, and a workspace documentation build with
-rustdoc warnings denied. The dependency audit command is:
-
-```text
-cargo audit --deny warnings
-```
-
-At the 2026-10-30 review, cargo-audit 0.22.2 fetched its RustSec advisory
-database and found no vulnerabilities or warnings in the current locked
-dependency graph. Its default yanked-crate check was available and passed; no
-advisory or yanked-crate check was unavailable.
+The pinned Rust 1.99.1 workspace and declared Rust 1.87.0 minimum have both
+passed the complete locked workspace checks. The repository CI workflow runs
+formatting, compilation, Clippy with warnings denied, tests, and Rustdoc. The
+dependency audit is run locally with `cargo audit --deny warnings`; its result
+is not currently a CI check. Governance and submission evidence are recorded
+in [submission-readiness](submission-readiness.md).
