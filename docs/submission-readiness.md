@@ -21,27 +21,43 @@ instead of treating checklist completion as approval.
 
 This review found no demonstrated submission-blocking correctness defect in
 the reviewed MVP boundary. It is not a full formal or independent protocol
-audit. Main now requires one PR approval, enforces admin coverage, requires
-the `checks` status and enables private vulnerability reporting. Secret
-scanning is still disabled. Repository Actions settings allow all actions and
-do not require SHA pinning; the organization-level Actions policy could not be
-read with the available token. AuthPath also overlaps materially with an
-existing Stellar signer inspector. These governance and positioning concerns
-remain disclosed; repository settings were not changed.
+audit. Main requires the strict `checks` status, enforces admins, requires
+review-conversation resolution, prevents force pushes and branch deletion,
+and enables secret scanning and private vulnerability reporting. The
+maintainer explicitly defers required independent approvals until the
+project accepts external contributions; this is not a current submission
+blocker and no independent review is claimed. The current branch-protection
+API nevertheless reports one required approval, so the saved setting does not
+match the maintainer's stated intention. No setting was changed. Repository
+Actions policy allows all actions and does not require SHA pinning; the
+effective organization policy could not be read with the available token.
+Existing workflow actions are pinned to verified SHAs in the correction
+branch, and dependency auditing is added to its CI. AuthPath overlaps with an
+existing Stellar signer inspector; no uniqueness claim is made.
 
 ## Authoritative repository state
 
 - Repository: <https://github.com/Stellar-AuthPath/authpath>
-- `main` SHA during this verification: `b924eadea09881c37ccea4dd8d63d794d7774528`
-- PRs #1 through #10 are merged. PR #10 merged at
-  <https://github.com/Stellar-AuthPath/authpath/pull/10>.
-- Current `main` CI: [run 41240342303, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41240342303)
-- Current `main` documentation build/deployment: [run 41240342304, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41240342304)
+- Audited `main` baseline SHA: `2a09eaabf3e5c82ecf9febca1cdcaee759869c2e`.
+  This is the evidence baseline and will not be rewritten when this report
+  later merges.
+- PRs #1 through #11 are merged. PR #11 merged at
+  <https://github.com/Stellar-AuthPath/authpath/pull/11>.
+- Baseline `main` CI: [run 41243948392, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41243948392)
+- Baseline `main` documentation build and Pages deployment: [run 41243948441, success](https://github.com/Stellar-AuthPath/authpath/actions/runs/41243948441)
+- Workflow-security and evidence corrections are on a separate review branch;
+  their results are not attributed to baseline `main`.
+- Candidate branch `submission-readiness-correction-2026-10-31` contains
+  [commit `f138014`](https://github.com/Stellar-AuthPath/authpath/commit/f13801424172bc264c74f18fedc640ba634b1afe),
+  which pins workflow actions to verified immutable revisions, and
+  [commit `1c059a1`](https://github.com/Stellar-AuthPath/authpath/commit/1c059a103d880d63b0fb016afbb5fc781dc61635),
+  which adds `cargo audit --deny warnings` to PR CI. These commits are not in
+  the audited baseline SHA.
 - These workflow results are GitHub-hosted checks on the stated `main` SHA;
   local commands below are separate evidence.
 - Public documentation: <https://stellar-authpath.github.io/authpath/>
 
-The GitHub PR list confirmed that PRs #1–#10 are merged. Historical PR checks
+The GitHub PR list confirmed that PRs #1–#11 are merged. Historical PR checks
 are not substituted for the current-main runs above.
 
 ## Scope and method
@@ -68,9 +84,9 @@ have been satisfied.
 | --- | --- | --- |
 | CRITICAL | None demonstrated | No reviewed path demonstrated an exploitable critical defect. |
 | HIGH | None demonstrated | No reviewed path demonstrated a high-severity defect within the stated scope. |
-| MEDIUM | Branch review conversation resolution is not required | Current protection reports `required_conversation_resolution.enabled=false`; Playbook §12A calls for resolution of review conversations. No setting was changed. |
-| MEDIUM | Repository Actions policy does not restrict action sources | API reports `allowed_actions: all` and `sha_pinning_required: false`; effective organization policy is inaccessible to the current token. Default workflow token is read-only. No setting was changed. |
-| LOW | Secret scanning is disabled | Repository security metadata reports secret scanning and push protection disabled. Private vulnerability reporting is enabled. No setting was changed. |
+| LOW | Repository Actions policy is permissive; organization policy is not verified | Repository API reports `allowed_actions: all`, `sha_pinning_required: false`, and read-only default workflow permissions. Organization policy returned HTTP 403 without `admin:org`. Existing workflow actions are SHA-pinned in the correction branch; no settings changed. |
+| INFORMATIONAL | Push protection and non-provider-pattern scanning are disabled | Secret scanning and private vulnerability reporting are enabled. No settings were changed. |
+| INFORMATIONAL | Approval setting differs from maintainer-stated intention | Maintainer defers required approvals until external contribution intake. Current API reports one required approval. Recorded accurately; not treated as a submission blocker and not changed. |
 | INFORMATIONAL | Material adjacent signer-analysis tool exists | StellarExpert's `stellar-tx-signers-inspector` analyzes transaction/account signers and feasibility; AuthPath's distinction is sequential conditional state analysis, not uniqueness. |
 | INFORMATIONAL | Audit boundary is not a formal verification | Reviewed source and tests provide evidence for the stated boundary, but do not prove correctness for all protocol versions, inputs, or ledger outcomes. |
 
@@ -128,13 +144,15 @@ MSRV.
 | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked` | PASS | PASS |
 | `cargo audit --deny warnings` | PASS | PASS |
 
-The refreshed cargo-audit database contained 1,395 advisories; 30 locked
-dependencies were scanned. The command exited successfully without a reported
-vulnerability or warning. This records the database snapshot at audit time,
-not a guarantee about future advisories. `Cargo.lock` is present and all
-workspace checks used `--locked`.
+`cargo audit --deny warnings` passed locally with cargo-audit 0.22.2. Its
+refreshed database contained 1,395 advisories and it scanned 30 locked
+dependencies without a reported vulnerability or warning. The correction
+branch adds the same command to PR CI; that result is separate from baseline
+`main`. This records the audit database snapshot at that time, not a guarantee
+about future advisories. `Cargo.lock` is present and workspace checks used
+`--locked`.
 
-The current `main` workflows independently passed as linked above. The
+The baseline `main` workflows independently passed as linked above. The
 documentation workflow uses mdBook 0.4.52. A local mdBook build succeeded.
 The deployed root, architecture, CLI, C5 audit, submission-readiness, and
 examples pages returned HTTP 200, and the site's internal navigation links
@@ -240,35 +258,46 @@ confidence risk that should be addressed with precise positioning and user
 validation before making funding claims. Neither Drips nor GrantFox approval
 can be predicted from this evidence.
 
-## Governance verification
+## Governance and GitHub Actions verification
 
-Authenticated GitHub API access verified repository settings on 2026-10-31.
-No settings were changed. Organization-level Actions policy could not be read:
-the endpoint returned HTTP 403 because the available token lacks `admin:org`.
+Authenticated GitHub API checks were performed on 2026-10-31. Repository
+settings were not changed. The organization-level Actions endpoint returned
+HTTP 403 because the available token lacks `admin:org`; effective organization
+restrictions are therefore **NOT VERIFIED**.
 
-| Control | Current verified state | Assessment |
+| Control | Observed state | Assessment |
 | --- | --- | --- |
-| Required CI on `main` | Strict required status context `checks` | PASS |
-| Required PR approval | 1 approving review; stale approvals dismissed | PASS as configured |
+| Required CI on `main` | Strict status context `checks` | PASS |
+| PR approval requirement | API reports `required_approving_review_count: 1`; maintainer says approval is deliberately deferred until external contribution intake | Actual value recorded; no setting changed and this is not a submission blocker |
 | Administrator enforcement | Enabled | PASS |
+| Review conversation resolution | Enabled | PASS |
 | Force pushes / branch deletion | Both disabled | PASS |
-| Review conversation resolution | Disabled | PARTIAL against Playbook 12A |
-| Secret scanning | Disabled in repository security metadata | NEEDS WORK; not enabled by this review |
+| Secret scanning | Enabled | PASS |
+| Push protection | Disabled | Optional hardening recommendation |
+| Non-provider pattern scanning | Disabled | Optional hardening recommendation |
 | Private vulnerability reporting | Enabled | PASS |
-| Actions default token | `contents: read`; workflows cannot approve PRs | PASS |
-| Repository Actions policy | `allowed_actions: all`; SHA pinning not required | NOT RESTRICTED at repository level |
-| Organization Actions policy | Not readable with current token (403, missing `admin:org`) | NOT VERIFIED |
-| PR workflow trigger | `pull_request`, read-only contents permission | PASS for the workflow inspected; no `pull_request_target` found |
-| CODEOWNERS/security-path review | No CODEOWNERS file; code-owner review is not required | PARTIAL; maintainer review remains policy-based |
+| Dependabot security updates | Disabled | Unchanged by this work |
+| Default `GITHUB_TOKEN` permissions | `contents: read`; workflows cannot approve PRs | PASS |
+| Repository Actions policy | All actions allowed; immutable SHA pinning is not enforced | Limitation; the workflows themselves are pinned in the correction branch |
+| Organization Actions policy | API returned 403 (missing `admin:org`) | NOT VERIFIED; do not infer enabled or disabled |
+| PR workflow trigger / secrets | `pull_request`; no `pull_request_target` or workflow secret references | PASS for untrusted PR boundary reviewed |
+| Pages deployment permissions | `pages: write` and `id-token: write` only on the deploy job, which does not run for pull requests | PASS for the workflow inspected |
 
-PR #10 is recorded as merged with an empty GitHub `reviews` array, while the
-current protection snapshot requires one approval. The API evidence does not
-show when that setting was enabled or whether it applied at that merge, so
-this review does not claim PR #10 satisfied the current rule. A deliberately
-failing PR was not created to test merge blocking. Current configuration is
-verified, but the historical merge and effective organization-level Actions
-policy remain unverified. Workflow definitions use major-version tags such as
-`actions/checkout@v4`; no immutable pin policy is active at repository level.
+The maintainer's approval decision is documented separately from GitHub's
+observed `1` approval setting. This review neither changes the setting nor
+asks for reviewers. No independent human or external protocol review is
+claimed. Playbook §12A review requirements are deferred until the project
+begins accepting external contributions; they are not used as a current
+submission blocker.
+
+The workflows at the audited baseline used mutable tags. The correction
+branch pins all seven `uses:` references to verified 40-character commits:
+`actions/checkout` v4.2.2, `dtolnay/rust-toolchain` 1.99.1,
+`actions/configure-pages` v5.0.0, `actions/upload-pages-artifact` v4.0.0,
+and `actions/deploy-pages` v4.0.5. Their resolved SHAs are recorded in the
+workflow files. The repository-level allowed-Actions setting remains `all`;
+no repository or organization setting was changed. The organization-level
+policy remains unverified.
 
 ## Playbook v1.3 traceability
 
@@ -281,7 +310,7 @@ program approval.
 | --- | --- | --- | --- | --- |
 | §0: “A reviewer can understand the output without being shown a speculative feature list.” | Applies | README, `docs/architecture.md`, `docs/cli.md`, runnable examples | PASS | None for current scope |
 | §1: “Build one end-to-end useful path”; “Test boundaries and failures.” | Applies | CLI integration tests, 166 tests in current-main CI, synthetic fixture commands | PASS | Continue to describe fixture results as conditional |
-| §1: “Require protected default branches and verified CI gates”; “report platform enforcement limits honestly.” | Applies | Live branch-protection API: required `checks`, one approval, admin enforcement, no force push/deletion; conversation resolution off | PARTIAL | Maintainer decide on conversation resolution and verify one failed-check PR is unmergeable |
+| §1: “Require protected default branches and verified CI gates”; “report platform enforcement limits honestly.” | Applies | Live API: strict required `checks`, admin enforcement, conversation resolution on, force pushes/deletion off. The API reports one required approval although maintainer says reviews are deferred. | PASS for observed protection; approval-policy mismatch disclosed | No setting changed. Maintainer can reconcile the approval value; it is not a current submission blocker. |
 | §1 / §3: “Name the user, task, existing workaround, and failure/cost”; “review current ... approved/public projects.” | Applies | README and this dated StellarExpert/Drips/GrantFox comparison | PARTIAL | No empirical user/problem validation is documented; broader landscape search and current application eligibility remain unverified |
 | §2 Phase A: define “core workflow and out-of-scope boundaries.” | Applies | README, architecture and CLI limitations | PASS | None for current MVP |
 | §2 Phase B: “current external assumptions verified or marked unknown.” | Applies | Stellar protocol references, dependency/MSRV results and dated ecosystem links | PARTIAL | Supported OS matrix and effective org Actions policy are not verified |
@@ -289,11 +318,13 @@ program approval.
 | §2 Phase D: “components, interfaces, authority and data flow.” | Applies | `docs/architecture.md`, JSON schema docs, report validation and trust boundary | PASS | None for current scope |
 | §2 Phase E: “minimal complete working feature set.” | Applies | `inspect`, `analyze`, `explain`, `verify`; actual commands recorded above | PASS | None |
 | §2 Phase F: real cross-component boundary verified when 2+ components connect | Applies (workspace model, analysis and CLI crates) | Workspace tests and CLI integration suite exercise real constructors, engine and report handling | PASS | No external service boundary exists |
-| §2 Phase G / §9: reproducible success, negative and security/failure tests; suitable dependency scan | Applies | CI passes fmt/check/Clippy/tests/Rustdoc; cargo audit passed locally; input/report/filesystem adversarial tests | PARTIAL | `cargo audit` is not a required CI job; portability beyond tested Linux runner is not established |
+| §2 Phase G / §9: reproducible success, negative and security/failure tests; suitable dependency scan | Applies | Baseline CI passes fmt/check/Clippy/166 tests/Rustdoc; `cargo audit` 0.22.2 passed locally; correction branch adds locked `cargo audit --deny warnings` to CI | PARTIAL on baseline; candidate check must pass | Portability beyond tested Linux runner is not established; candidate PR CI result is reported separately |
 | §2 Phase H / §10: live proof only when claims depend on live systems | N/A for analyzer; applies to docs site | No ledger/network claims; public Pages pages and current deployment workflow checked | PASS / N/A | No live Stellar transaction is required or claimed |
 | §2 Phase I / §11: “A fresh user can obtain and execute the project in its intended environment.” | Applies | Source build/run commands, lockfile, CI clean runner, local fixture executions; no binary release | PASS for source installation | No release/tag required by current project or verified program rule |
 | §2 Phase J / §12: truthful docs, runnable sample, verified entry point and reproduce workflow | Applies | README links published docs; CLI reference and `examples/`; live links and examples checked | PASS | Presentation below is a concise reviewer handoff |
-| §12A: require PRs, exact passing checks, approvals, no force push/deletion, and protect against bypass | Applies; mandatory | Current API reports strict `checks`, one approval, admins enforced, force/deletion off; PR workflow is read-only `pull_request` | PARTIAL | Review resolution off; no failing-PR merge test; org action policy inaccessible; PR #10 historical approval timing unclear |
+| §12A: protect default branch, require exact CI checks, forbid force push/deletion, resolve review threads, review untrusted workflows | Applies to repository configuration | Current API reports strict `checks`, admin enforcement, conversation resolution, force/deletion disabled; PR workflow is read-only `pull_request` with no secrets or `pull_request_target`; correction branch SHA-pins actions | PASS for observed configuration; effective org Actions restrictions NOT VERIFIED | Organization endpoint requires `admin:org`; repository API allows all actions. No settings changed. |
+| §12A: independent approval and human review for contributor PRs | Applies when accepting external contributions; maintainer defers until then | Maintainer instruction; branch API currently reports one required approval, contrary to stated intended value | DEFERRED, not a current submission blocker | Do not claim full §12A contribution-review compliance or independent review; reconcile setting before external PR intake. |
+| §12A: “Confirm a deliberately failing PR cannot merge” | Applies before accepting external PRs | Required context `checks` is strict and configured; no failing PR was created during this read-only verification | NOT VERIFIED; deferred with external-contribution intake | Run a safe gate test before opening contribution intake; not a current submission blocker. |
 | §13 Phase K: “Review without changing files first”; classify blockers and freeze unrelated work | Applies | Audit record and current verification; no code changes made | PASS for this audit | Continue freeze; this evidence update only refreshes facts and traceability |
 | §13: only claim READY when release claims are evidence-backed | Applies | Provisional verdict and limitations in this report | PASS | Final program eligibility/approval is separate |
 | §14 L1: pre-approval issue set should be “small, selective and genuine”; zero is allowed | Applies | Repository has zero open issues; no backlog was created | PASS | Keep at zero unless a concrete contributor task is justified |
@@ -346,49 +377,55 @@ Soroban authorization are unsupported.
 | Area | Status | Evidence / remaining condition |
 | --- | --- | --- |
 | Technical correctness | PASS within reviewed scope | Current-main CI runs 166 tests; protocol/source and implementation review; not formal verification or all-version coverage |
-| Security | PARTIAL | Local untrusted-input boundary and no-key/no-network design; repository secret scanning disabled and effective org Actions policy not verified |
+| Security | PARTIAL on audited `main` | No application defect was demonstrated; secret scanning is enabled and PR workflows are read-only `pull_request` jobs. Main still uses mutable action tags and has no dependency-audit CI step; the candidate branch pins actions and adds `cargo audit`. Effective organization Actions policy is NOT VERIFIED. Push protection and non-provider-pattern scanning are optional hardening gaps. |
 | Reproducibility | PASS for source build and fixtures | Locked CI, Rust 1.87/1.99 local evidence, executable examples |
 | Documentation accuracy | PASS for reviewed current source | Published pages and internal navigation fetched; this report refreshes current SHA/governance/Playbook evidence |
 | Architecture | PASS for MVP | Trust boundaries, conditional results and unsupported behavior documented |
 | Stellar-specific value | PASS, narrow | Classic account signer/threshold and ordered authorization semantics used directly |
 | Originality | PARTIAL | Practical sequential case runs; direct overlap with StellarExpert; broader research and user validation incomplete |
-| Governance | PARTIAL | Required CI/approval/admin enforcement and private reporting enabled; secret scanning off, conversation resolution off, Actions allowlist/pinning absent at repo level |
+| Governance | PASS for verified branch rules; Actions policy PARTIAL | Strict required `checks`, administrator enforcement, conversation resolution, no force-push/deletion, secret scanning, private reporting, read-only default token. Live API reports one required approval despite the maintainer's stated deferral; this mismatch is not treated as a submission blocker. Repository allows all Actions and does not enforce SHA pins; candidate workflows pin their current action references. Organization policy is NOT VERIFIED. |
 | Playbook compliance | PARTIAL | Applicable v1.3 requirements traceable; multiple rows partial and external claims/controls unverified |
 | Independent protocol review | NOT VERIFIED | This review is not an independent external reviewer sign-off |
 | Public documentation | PASS | Live site and links checked; current deployment workflow succeeded |
 
-## Remaining justified actions
+## Remaining justified follow-up
 
-1. Maintainer: decide whether to enable repository secret scanning and
-   conversation resolution, restrict allowed Actions / require immutable
-   pins, and verify effective organization Actions policy. This audit made no
-   settings changes.
-2. Maintainer: confirm the one-approval rule is enforced on future PRs and
-   clarify why PR #10 has no review entries despite its merge; the current API
-   does not reveal when the rule was enabled. Verify a failing required check
-   blocks merging through a safe test PR if practical.
-3. Independent Stellar reviewer: review classic protocol assumptions and
-   compare selected cases against a pinned stellar-core or other independent
-   oracle. No formal audit is claimed.
-4. Applicant/maintainer: check current program eligibility and application
-   windows immediately before applying. The Stellar Wave page checked on
-   2026-10-31 showed no active/upcoming wave; no application or approval is
-   claimed. GrantFox is an OSS collaboration platform/project, not an AuthPath
-   approval signal.
+No submission-blocking Rust or CLI defect was reproduced. The first item is
+the remaining project-owned correction before this evidence can be promoted
+from conditional readiness. The other items are disclosed limitations or
+maintainer-controlled follow-up:
 
-No Rust-code blocker was reproduced. No product implementation change is
-justified by the checks performed. This PR updates only submission evidence.
+1. This review branch's action-SHA pins and dependency-audit CI step require
+   PR checks and maintainer review before they become part of `main`. Until
+   merged, the audited `main` continues to use mutable action tags and does
+   not run `cargo audit` in CI. Baseline `main` CI and Pages evidence above is
+   distinct from candidate-branch evidence.
+2. Effective organization-level Actions restrictions remain NOT VERIFIED
+   because the authenticated API request returned 403 without `admin:org`.
+   Repository-level permissions are recorded above; no settings were changed.
+3. The live branch-protection API reports one required approval, while the
+   maintainer has said mandatory independent review is deliberately deferred
+   until external contributions begin. This discrepancy should be reconciled
+   before external contribution intake. It is not a current submission
+   blocker, and no reviewer was requested or independent review claimed.
+4. Broader user/problem validation and independent protocol differential
+   review would strengthen future evidence, but neither is represented as
+   completed. The existing tests and protocol-source review do not constitute
+   formal verification.
+
+Application eligibility and submission are outside this repository review;
+the maintainer will handle any application activity.
 
 ## Provisional verdict
 
 **CONDITIONALLY READY**
 
-AuthPath is demonstrable and reproducible within its offline classic-account
-scope, and its sequential behavior is practically differentiated from the
-transaction-feasibility workflow documented by StellarExpert. It is not
-unconditionally ready for submission: secret scanning is off, the Actions
-restriction/effective organization policy is unresolved, the mandatory
-conversation-resolution control is off, the historical approval status for
-PR #10 is unclear, user validation and independent protocol review are absent,
-and program eligibility remains to be checked at application time. No external
-approval is predicted or claimed.
+The audited `main` is demonstrable and reproducible within AuthPath's stated
+offline classic-account scope, and no submission-blocking Rust or CLI defect
+was reproduced. The candidate workflow-security corrections are not in
+`main` yet, so the baseline still lacks immutable action references and CI
+dependency auditing. Effective organization-level Actions restrictions also
+remain unverified. The maintainer's deliberate deferral of independent PR
+approvals is not a reason for this verdict. Reassess after the correction PR
+passes CI and the maintainer decides whether to merge it; no external review
+or application approval is claimed.
